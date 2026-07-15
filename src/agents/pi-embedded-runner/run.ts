@@ -40,6 +40,7 @@ import { normalizeProviderId } from "../model-selection.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
 import {
   classifyFailoverReason,
+  decideSameModelRetry,
   extractObservedOverflowTokenCount,
   type FailoverReason,
   formatAssistantErrorText,
@@ -413,6 +414,10 @@ export async function runEmbeddedPiAgent(
           }
         };
         let authRetryPending = false;
+        // SB542: one bounded same-model retry per run (rate limit / overload /
+        // malformed_function_call) when rotation and model fallback are unavailable.
+        const MAX_SAME_MODEL_TRANSIENT_RETRIES = 1;
+        let sameModelTransientRetries = 0;
         // Hoisted so the retry-limit error path can use the most recent API total.
         let lastTurnTotal: number | undefined;
         while (true) {
@@ -1087,6 +1092,26 @@ export async function runEmbeddedPiAgent(
                 })
               );
             }
+            {
+              // SB542 last resort: no rotation happened, no fallback configured.
+              const sameModelRetry = decideSameModelRetry({
+                errorText,
+                failoverReason: promptFailoverReason,
+                aborted,
+                retriesUsed: sameModelTransientRetries,
+                maxRetries: MAX_SAME_MODEL_TRANSIENT_RETRIES,
+              });
+              if (sameModelRetry.retry) {
+                sameModelTransientRetries += 1;
+                log.warn(
+                  `SB542 same-model retry (${sameModelRetry.reason}) for ${provider}/${modelId}: ` +
+                    `attempt=${sameModelTransientRetries}/${MAX_SAME_MODEL_TRANSIENT_RETRIES} ` +
+                    `delayMs=${sameModelRetry.delayMs} prompt-stage error=${errorText.slice(0, 200)}`,
+                );
+                await sleepWithAbort(sameModelRetry.delayMs, params.abortSignal);
+                continue;
+              }
+            }
             if (promptFailoverFailure || promptFailoverReason) {
               logPromptFailoverDecision("surface_error");
             }
@@ -1229,9 +1254,52 @@ export async function runEmbeddedPiAgent(
                 status,
               });
             }
+            {
+              // SB542 last resort: rotation exhausted, no fallback configured.
+              const sameModelRetry = decideSameModelRetry({
+                errorText: lastAssistant?.errorMessage ?? "",
+                failoverReason: assistantFailoverReason,
+                aborted,
+                retriesUsed: sameModelTransientRetries,
+                maxRetries: MAX_SAME_MODEL_TRANSIENT_RETRIES,
+              });
+              if (sameModelRetry.retry) {
+                sameModelTransientRetries += 1;
+                log.warn(
+                  `SB542 same-model retry (${sameModelRetry.reason}) for ${provider}/${modelId}: ` +
+                    `attempt=${sameModelTransientRetries}/${MAX_SAME_MODEL_TRANSIENT_RETRIES} ` +
+                    `delayMs=${sameModelRetry.delayMs} assistant-stage ` +
+                    `error=${(lastAssistant?.errorMessage ?? "").slice(0, 200)}`,
+                );
+                await sleepWithAbort(sameModelRetry.delayMs, params.abortSignal);
+                continue;
+              }
+            }
             logAssistantFailoverDecision("surface_error");
           }
 
+          {
+            // SB542: provider format failures (malformed_function_call) carry no
+            // FailoverReason — they fall through rotation entirely. One redraw.
+            const sameModelRetry = decideSameModelRetry({
+              errorText: lastAssistant?.errorMessage ?? "",
+              failoverReason: null,
+              aborted,
+              retriesUsed: sameModelTransientRetries,
+              maxRetries: MAX_SAME_MODEL_TRANSIENT_RETRIES,
+            });
+            if (sameModelRetry.retry) {
+              sameModelTransientRetries += 1;
+              log.warn(
+                `SB542 same-model retry (${sameModelRetry.reason}) for ${provider}/${modelId}: ` +
+                  `attempt=${sameModelTransientRetries}/${MAX_SAME_MODEL_TRANSIENT_RETRIES} ` +
+                  `delayMs=${sameModelRetry.delayMs} non-failover ` +
+                  `error=${(lastAssistant?.errorMessage ?? "").slice(0, 200)}`,
+              );
+              await sleepWithAbort(sameModelRetry.delayMs, params.abortSignal);
+              continue;
+            }
+          }
           const usageMeta = buildUsageAgentMetaFields({
             usageAccumulator,
             lastAssistantUsage: lastAssistant?.usage as UsageLike | undefined,

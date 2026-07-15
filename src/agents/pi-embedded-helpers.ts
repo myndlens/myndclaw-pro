@@ -14,6 +14,8 @@ export {
   formatBillingErrorMessage,
   classifyFailoverReason,
   classifyFailoverReasonFromHttpStatus,
+  decideSameModelRetry,
+  isMalformedFunctionCallError,
   formatRawAssistantErrorForUi,
   formatAssistantErrorText,
   getApiErrorPayloadFingerprint,

@@ -1056,3 +1056,44 @@ export function isFailoverAssistantError(msg: AssistantMessage | undefined): boo
   }
   return isFailoverErrorMessage(msg.errorMessage ?? "");
 }
+
+// ── SB542 (MyndClaw-Pro) — bounded same-model retry law ─────────────────────
+// When a run has NO other exit (no profile to rotate to, no fallback model),
+// a transient provider failure (429 rate limit / overload) or a provider
+// FORMAT failure (finish_reason: malformed_function_call — a bad draw; a
+// redraw plausibly parses) warrants exactly ONE loud same-model retry.
+// A second failure surfaces exactly as before. Aborted runs never retry.
+
+const MALFORMED_FUNCTION_CALL_RE = /finish_reason:?\s*malformed_function_call/i;
+
+export function isMalformedFunctionCallError(raw: string): boolean {
+  return MALFORMED_FUNCTION_CALL_RE.test(raw.trim());
+}
+
+export type SameModelRetryDecision = {
+  retry: boolean;
+  reason: "rate_limit" | "overloaded" | "format_failure" | null;
+  delayMs: number;
+};
+
+export function decideSameModelRetry(params: {
+  errorText: string;
+  failoverReason: FailoverReason | null;
+  aborted: boolean;
+  retriesUsed: number;
+  maxRetries: number;
+}): SameModelRetryDecision {
+  if (params.aborted || params.retriesUsed >= params.maxRetries) {
+    return { retry: false, reason: null, delayMs: 0 };
+  }
+  if (isMalformedFunctionCallError(params.errorText)) {
+    return { retry: true, reason: "format_failure", delayMs: 2_000 };
+  }
+  if (params.failoverReason === "rate_limit") {
+    return { retry: true, reason: "rate_limit", delayMs: 20_000 };
+  }
+  if (params.failoverReason === "overloaded") {
+    return { retry: true, reason: "overloaded", delayMs: 5_000 };
+  }
+  return { retry: false, reason: null, delayMs: 0 };
+}
