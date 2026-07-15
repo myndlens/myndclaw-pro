@@ -52,7 +52,15 @@ export const reefSetupWizard = {
     };
   },
   configure: async ({ cfg }: { cfg: OpenClawConfig }) => ({ cfg }),
-  configureInteractive: async ({ cfg, prompter }: { cfg: OpenClawConfig; prompter: Prompt }) => {
+  configureInteractive: async ({
+    cfg,
+    prompter,
+    options,
+  }: {
+    cfg: OpenClawConfig;
+    prompter: Prompt;
+    options?: { beforePersistentEffect?: () => Promise<void> };
+  }) => {
     const relayUrl = await prompter.text({
       message: "Reef relay URL",
       initialValue: "https://reefwire.ai",
@@ -98,6 +106,7 @@ export const reefSetupWizard = {
         initialValue: resolveStateDir(),
       }),
     );
+    await options?.beforePersistentEffect?.();
     const keys = await generateAndStoreKeys(stateDir);
     const client = new ReefTransportClient(relayUrl, handle, keys);
     if (!setupSession) {
