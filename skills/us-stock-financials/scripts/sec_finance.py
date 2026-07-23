@@ -25,7 +25,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 
-USER_AGENT = "MyndLens Research topdoc.digital@gmail.com"
+# SEC requires a descriptive User-Agent that declares a real contact identity
+# (never a spoofed browser UA — that draws a 403 on the EDGAR resolver).
+# Overridable via env so the contact can be set per deployment.
+USER_AGENT = os.environ.get("SEC_EDGAR_UA", "MyndLens Research contact@myndlens.com")
 XBRL_BASE = "https://data.sec.gov/api/xbrl"
 EDGAR_BASE = "https://www.sec.gov/cgi-bin/browse-edgar"
 ISSUERS_FILE = Path(__file__).resolve().parent.parent / "references" / "issuers.json"
@@ -96,14 +99,10 @@ for issuer in ISSUERS:
 
 
 def _secure_ctx() -> ssl.SSLContext:
+    # TLS verification is ALWAYS on. There is no insecure fallback (Doctrine 1):
+    # SEC endpoints present valid certificates, so a verification failure is a
+    # real problem to surface — never silently downgrade to CERT_NONE.
     return ssl.create_default_context()
-
-
-def _fallback_insecure_ctx() -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
 
 
 def _get_json(url: str, timeout: int = 20, retries: int = 2) -> dict:
@@ -118,39 +117,36 @@ def _get_json(url: str, timeout: int = 20, retries: int = 2) -> dict:
                 "Host": parsed.netloc,
             },
         )
-        for ctx_factory in (_secure_ctx, _fallback_insecure_ctx):
-            try:
-                with urllib.request.urlopen(req, timeout=timeout, context=ctx_factory()) as resp:
-                    return json.loads(resp.read())
-            except ssl.SSLError as e:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=_secure_ctx()) as resp:
+                return json.loads(resp.read())
+        except ssl.SSLError as e:
+            # FAIL LOUD — never downgrade TLS verification.
+            raise ConnectionError(f"TLS verification failed for {url}: {e}") from e
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries:
+                time.sleep(3 * (attempt + 1))
                 last_error = e
-                continue
-            except urllib.error.HTTPError as e:
-                if e.code == 429 and attempt < retries:
-                    time.sleep(3 * (attempt + 1))
-                    last_error = e
-                    break
-                if e.code == 404:
-                    raise ValueError(f"CIK or resource not found: {url}") from e
+            elif e.code == 404:
+                raise ValueError(f"CIK or resource not found: {url}") from e
+            else:
                 raise ValueError(f"HTTP {e.code} fetching {url}: {e.reason}") from e
-            except urllib.error.URLError as e:
-                last_error = e
-                continue
+        except urllib.error.URLError as e:
+            last_error = e
         if attempt < retries:
             time.sleep(1.5 ** attempt)
-    raise ConnectionError(f"Network/SSL error fetching {url}: {last_error}")
+    raise ConnectionError(f"Network error fetching {url}: {last_error}")
 
 
 def _get_text(url: str, timeout: int = 20) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    last_error = None
-    for ctx_factory in (_secure_ctx, _fallback_insecure_ctx):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout, context=ctx_factory()) as resp:
-                return resp.read().decode("utf-8", errors="replace")
-        except Exception as e:
-            last_error = e
-    raise ConnectionError(f"Failed to fetch {url}: {last_error}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=_secure_ctx()) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except ssl.SSLError as e:
+        raise ConnectionError(f"TLS verification failed for {url}: {e}") from e
+    except Exception as e:
+        raise ConnectionError(f"Failed to fetch {url}: {e}") from e
 
 
 TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -409,7 +405,12 @@ def generate_pdf_report(data: Dict, output_path: str) -> str:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
     except ImportError:
-        raise ImportError("需要安装 reportlab: pip3 install reportlab --break-system-packages")
+        raise ImportError(
+            "PDF output requires the 'reportlab' package, which is not installed. "
+            "JSON and table output (--output json / table) need no extra dependencies. "
+            "To enable PDF, add reportlab to the container image build declaratively "
+            "(e.g. requirements/pyproject) — do not install packages on the host."
+        )
     
     # 尝试注册中文字体
     chinese_font = 'Helvetica'
