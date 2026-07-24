@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """upload-post entrypoint — publish approved content to the user's connected
-social platform(s) via the Upload-Post aggregator API. (SB613, social.publish.)
+social platform(s) via the Upload-Post aggregator API, and manage engagement
+(list / reply-to / delete comments). (SB613, social.publish + comments.)
 
 STDLIB ONLY (urllib) — no external dependency, so the skill stays OC-eligible
 and the tenant image needs no pip install. Mirrors the official upload-post
-Python SDK behaviour over the documented REST API.
+Python SDK behaviour over the documented REST API. (The SDK does NOT expose the
+comments API, and it pulls in `requests` — a non-stdlib dep — so we deliberately
+stay on urllib and reach the comments endpoints directly.)
 
 PER-TENANT BYOK (Doctrine 1: no hardcoding, no silent failure):
   The user's own Upload-Post API key + profile are fetched AT INVOCATION from the
@@ -12,21 +15,28 @@ PER-TENANT BYOK (Doctrine 1: no hardcoding, no silent failure):
   OBEGEE_INTERNAL_KEY + TENANT_ID, already present in the container). The key is
   deliberately NOT placed in the container/gateway environment — it must not be
   visible to the tenant blackbox or other tools; it lives only in THIS process for
-  the duration of the post. If Upload-Post is not connected, this exits non-zero with
-  a clear message — it never posts blind. (UPLOAD_POST_API_KEY/UPLOAD_POST_PROFILE are
+  the duration of the call. If Upload-Post is not connected, this exits non-zero with
+  a clear message — it never acts blind. (UPLOAD_POST_API_KEY/UPLOAD_POST_PROFILE are
   honored as an env override for local testing only.)
 
 Platform id(s) come from --platform (mapped from the mandate's channel dim) — the
 skill NEVER assumes a single platform (Doctrine 21).
 
-Usage:
+Usage — publish:
   upload.py --kind text  --platform x,linkedin --title "<approved text>"
   upload.py --kind photo --platform instagram  --title "<caption>" --file a.jpg --file b.jpg
   upload.py --kind video --platform tiktok,instagram --title "<caption>" --file clip.mp4
   upload.py --kind document --platform linkedin --title "<title>" --file deck.pdf [--description ...]
+  upload.py --kind text --platform linkedin --title "<text>" --linkedin-page-id urn:li:organization:<id>
   upload.py --status --request-id <id>          # poll an async/scheduled upload
 
-Prints the API JSON response to stdout. On success the response carries a
+Usage — engagement (comments; linkedin/instagram/facebook/youtube only, NOT tiktok):
+  upload.py --list-comments --platform linkedin --post-id urn:li:share:<id> [--limit N --after CURSOR]
+  upload.py --reply --platform linkedin --post-id urn:li:share:<id> --message "<reply text>"
+  upload.py --reply --platform instagram --comment-id <id> --message "<reply>"   # IG requires comment-id
+  upload.py --delete-comment --platform linkedin --comment-id <id> --post-id urn:li:share:<id>
+
+Prints the API JSON response to stdout. On a successful publish the response carries a
 request_id/job_id plus per-platform post_id + post_url (the post_reference).
 """
 import argparse
@@ -34,6 +44,7 @@ import json
 import os
 import sys
 import uuid
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -48,6 +59,10 @@ ENDPOINTS = {
 # multipart file field name per kind (text has no file)
 FILE_FIELD = {"photo": "photos[]", "video": "video", "document": "document"}
 
+# Platforms Upload-Post supports for the comments API (per docs.upload-post.com/api/comments).
+# TikTok is explicitly NOT supported for comments.
+COMMENT_PLATFORMS = ("instagram", "facebook", "youtube", "linkedin")
+
 
 def _fail(msg, code=2):
     sys.stderr.write("upload-post: %s\n" % msg)
@@ -60,7 +75,7 @@ def _load_credentials():
     The BYOK key is deliberately NOT placed in the container / gateway environment — it
     must not be visible to the tenant blackbox or any other tool. Instead THIS tool
     fetches it on demand from the Control Plane, so the key lives only in this process
-    for the duration of the post. An explicit env override
+    for the duration of the call. An explicit env override
     (UPLOAD_POST_API_KEY/UPLOAD_POST_PROFILE) is honored first, for local testing.
     """
     api_key = os.environ.get("UPLOAD_POST_API_KEY", "").strip()
@@ -73,7 +88,7 @@ def _load_credentials():
     internal_key = os.environ.get("OBEGEE_INTERNAL_KEY", "").strip()
     if not (base and tenant and internal_key):
         _fail("Upload-Post credential is not in env and the Control Plane is unreachable "
-              "(OBEGEE_API_URL / TENANT_ID / OBEGEE_INTERNAL_KEY missing). Cannot post.")
+              "(OBEGEE_API_URL / TENANT_ID / OBEGEE_INTERNAL_KEY missing). Cannot proceed.")
     url = "%s/api/internal/social-credentials/%s" % (base, tenant)
     req = urllib.request.Request(url, headers={"X-Internal-API-Key": internal_key})
     try:
@@ -105,6 +120,27 @@ def _request(method, path, api_key, *, headers=None, data=None):
         return e.code, body
     except urllib.error.URLError as e:
         _fail("network error reaching Upload-Post: %s" % e.reason, code=3)
+
+
+def _json_request(method, path, api_key, body):
+    """POST/DELETE with a JSON body (the comments create/delete endpoints)."""
+    data = json.dumps(body).encode("utf-8")
+    return _request(method, path, api_key,
+                    headers={"Content-Type": "application/json"}, data=data)
+
+
+def _comment_platform(args):
+    """The comments API takes exactly ONE platform (unlike publish, which fans out)."""
+    if not args.platform:
+        _fail("--platform is required (one of: %s)" % ", ".join(COMMENT_PLATFORMS))
+    plats = [p.strip() for p in args.platform.split(",") if p.strip()]
+    if len(plats) != 1:
+        _fail("the comments API takes exactly ONE --platform, got: %s" % ", ".join(plats))
+    plat = plats[0]
+    if plat not in COMMENT_PLATFORMS:
+        _fail("platform '%s' does not support comments (supported: %s)"
+              % (plat, ", ".join(COMMENT_PLATFORMS)))
+    return plat
 
 
 def _multipart(fields, files):
@@ -157,7 +193,7 @@ def do_status(args):
 
 def do_upload(args):
     api_key, profile = _load_credentials()
-    platforms = [p.strip() for p in args.platform.split(",") if p.strip()]
+    platforms = [p.strip() for p in args.platform.split(",") if p.strip()] if args.platform else []
     if not platforms:
         _fail("--platform is required (map the mandate's channel to platform ids)")
     if not args.title:
@@ -193,12 +229,74 @@ def do_upload(args):
     _emit(status, body)
 
 
+def do_list_comments(args):
+    """GET /uploadposts/comments — list comments on a published post.
+    Identify the post by --post-id (LinkedIn: the post URN) OR --post-url."""
+    api_key, profile = _load_credentials()
+    platform = _comment_platform(args)
+    if not (args.post_id or args.post_url):
+        _fail("--list-comments needs --post-id (the post URN/id) or --post-url")
+    q = {"user": profile, "platform": platform}
+    if args.post_id:
+        q["post_id"] = args.post_id
+    if args.post_url:
+        q["post_url"] = args.post_url
+    if args.limit:
+        q["limit"] = args.limit
+    if args.after:
+        q["after"] = args.after
+    status, body = _request("GET", "/uploadposts/comments?" + urllib.parse.urlencode(q), api_key)
+    _emit(status, body)
+
+
+def do_comment(args):
+    """POST /uploadposts/comments/create — reply-to / comment on a post.
+    Body: platform, user, message, and EXACTLY ONE of comment_id / post_id / post_url.
+    LinkedIn: post_id is the post URN. Instagram: only replies (must pass --comment-id)."""
+    api_key, profile = _load_credentials()
+    platform = _comment_platform(args)
+    if not args.message:
+        _fail("--reply needs --message (the reply text)")
+    targets = [t for t in (args.comment_id, args.post_id, args.post_url) if t]
+    if len(targets) != 1:
+        _fail("--reply needs EXACTLY ONE of --comment-id, --post-id, or --post-url")
+    if platform == "instagram" and not args.comment_id:
+        _fail("Instagram supports replies only — pass --comment-id")
+    body = {"platform": platform, "user": profile, "message": args.message}
+    if args.comment_id:
+        body["comment_id"] = args.comment_id
+    elif args.post_id:
+        body["post_id"] = args.post_id
+    else:
+        body["post_url"] = args.post_url
+    status, resp = _json_request("POST", "/uploadposts/comments/create", api_key, body)
+    _emit(status, resp)
+
+
+def do_delete_comment(args):
+    """DELETE /uploadposts/comments/delete — remove a comment (moderation).
+    Body: platform, user, comment_id; post_id required for LinkedIn (the post URN)."""
+    api_key, profile = _load_credentials()
+    platform = _comment_platform(args)
+    if not args.comment_id:
+        _fail("--delete-comment needs --comment-id")
+    if platform == "linkedin" and not args.post_id:
+        _fail("LinkedIn delete needs --post-id (the post URN) alongside --comment-id")
+    body = {"platform": platform, "user": profile, "comment_id": args.comment_id}
+    if args.post_id:
+        body["post_id"] = args.post_id
+    status, resp = _json_request("DELETE", "/uploadposts/comments/delete", api_key, body)
+    _emit(status, resp)
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Publish content via Upload-Post.")
+    ap = argparse.ArgumentParser(description="Publish + manage engagement via Upload-Post.")
+    # ---- publish ----
     ap.add_argument("--kind", choices=list(ENDPOINTS.keys()),
                     help="text | photo | video | document")
-    ap.add_argument("--platform", help="comma-separated platform ids "
-                    "(x,linkedin,facebook,instagram,tiktok,threads,reddit,bluesky)")
+    ap.add_argument("--platform", help="platform ids. Publish: comma-separated "
+                    "(x,linkedin,facebook,instagram,tiktok,threads,reddit,bluesky). "
+                    "Comments: exactly one of instagram,facebook,youtube,linkedin")
     ap.add_argument("--title", help="the APPROVED caption / post text")
     ap.add_argument("--description", help="extended description / body")
     ap.add_argument("--file", action="append", default=[],
@@ -209,17 +307,39 @@ def main():
                     help="target LinkedIn company Page id (post to a Page, not the personal feed)")
     ap.add_argument("--async", dest="async_upload", action="store_true",
                     help="background processing (returns request_id to poll)")
+    # ---- status ----
     ap.add_argument("--status", action="store_true", help="poll upload status")
     ap.add_argument("--request-id", dest="request_id", help="for --status")
     ap.add_argument("--job-id", dest="job_id", help="for --status (scheduled)")
+    # ---- comments (engagement) ----
+    ap.add_argument("--list-comments", dest="list_comments", action="store_true",
+                    help="list comments on a post (needs --platform + --post-id/--post-url)")
+    ap.add_argument("--reply", action="store_true",
+                    help="reply-to / comment on a post (needs --platform + --message + one target)")
+    ap.add_argument("--delete-comment", dest="delete_comment", action="store_true",
+                    help="delete a comment (needs --platform + --comment-id; LinkedIn also --post-id)")
+    ap.add_argument("--post-id", dest="post_id",
+                    help="post identifier — LinkedIn: the post URN (urn:li:share:... / urn:li:ugcPost:...)")
+    ap.add_argument("--post-url", dest="post_url", help="post URL (alternative to --post-id)")
+    ap.add_argument("--comment-id", dest="comment_id",
+                    help="comment id — reply target (Instagram) or delete target")
+    ap.add_argument("--message", help="the reply/comment text (for --reply)")
+    ap.add_argument("--limit", help="max comments per page (for --list-comments)")
+    ap.add_argument("--after", help="pagination cursor (for --list-comments)")
     args = ap.parse_args()
 
     if args.status:
         do_status(args)
+    elif args.list_comments:
+        do_list_comments(args)
+    elif args.reply:
+        do_comment(args)
+    elif args.delete_comment:
+        do_delete_comment(args)
     elif args.kind:
         do_upload(args)
     else:
-        ap.error("one of --kind or --status is required")
+        ap.error("one of --kind, --status, --list-comments, --reply, or --delete-comment is required")
 
 
 if __name__ == "__main__":

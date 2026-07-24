@@ -40,7 +40,20 @@ python3 scripts/upload.py --kind text  --platform x,linkedin --title "<approved 
 python3 scripts/upload.py --kind photo --platform instagram  --title "<caption>" --file a.jpg --file b.jpg
 python3 scripts/upload.py --kind video --platform tiktok,instagram --title "<caption>" --file clip.mp4
 python3 scripts/upload.py --kind document --platform linkedin --title "<title>" --file deck.pdf
+python3 scripts/upload.py --kind text --platform linkedin --title "<text>" --linkedin-page-id urn:li:organization:<id>  # company Page
 python3 scripts/upload.py --status --request-id <id>   # poll an async/scheduled upload
+```
+
+The same entrypoint manages **engagement** (comments) on a published post — list,
+reply-to, and delete. Comments are supported on **linkedin, instagram, facebook,
+youtube only** (NOT tiktok), and take **exactly one** `--platform`. Identify the post by
+`--post-id` (LinkedIn: the post URN, e.g. `urn:li:share:...`) or `--post-url`:
+
+```bash
+python3 scripts/upload.py --list-comments --platform linkedin --post-id urn:li:share:<id> [--limit N --after CURSOR]
+python3 scripts/upload.py --reply --platform linkedin --post-id urn:li:share:<id> --message "<reply text>"
+python3 scripts/upload.py --reply --platform instagram --comment-id <id> --message "<reply>"   # IG replies-only: needs --comment-id
+python3 scripts/upload.py --delete-comment --platform linkedin --comment-id <id> --post-id urn:li:share:<id>
 ```
 
 It prints the API JSON (per-platform `post_id` + `post_url`, and `request_id`/`job_id`
@@ -79,6 +92,9 @@ The `user` parameter in all endpoints refers to your **profile name** (not usern
 | `/upload_photos` | POST | Upload photos/carousels |
 | `/upload_text` | POST | Text-only posts |
 | `/upload_document` | POST | Upload documents (LinkedIn only) |
+| `/uploadposts/comments` | GET | List comments on a post (linkedin/instagram/facebook/youtube) |
+| `/uploadposts/comments/create` | POST | Reply-to / comment on a post |
+| `/uploadposts/comments/delete` | DELETE | Delete a comment (moderation) |
 | `/uploadposts/status?request_id=X` | GET | Check async upload status |
 | `/uploadposts/history` | GET | Upload history |
 | `/uploadposts/schedule` | GET | List scheduled posts |
@@ -230,6 +246,32 @@ curl "https://api.upload-post.com/api/analytics/$UPLOAD_POST_PROFILE?platforms=i
 Supported: Instagram, TikTok, LinkedIn, Facebook, X, YouTube, Threads, Pinterest, Reddit, Bluesky.
 
 Returns: followers, impressions, reach, profile views, time-series data.
+
+## Comments (Engagement)
+
+Read, reply-to, and delete comments on a published post. Supported on **LinkedIn,
+Instagram, Facebook, YouTube** (not TikTok). Prefer `scripts/upload.py` over raw curl.
+
+Post identifier per platform: Instagram = numeric media id · YouTube = video id ·
+LinkedIn = post URN (`urn:li:share:...` or `urn:li:ugcPost:...`; `post_url` also works).
+
+```bash
+# List
+curl "https://api.upload-post.com/api/uploadposts/comments?user=$UPLOAD_POST_PROFILE&platform=linkedin&post_id=urn:li:share:XXX" \
+  -H "Authorization: Apikey $UPLOAD_POST_API_KEY"
+
+# Create / reply (JSON body: platform, user, message, and EXACTLY ONE of comment_id|post_id|post_url)
+curl -X POST "https://api.upload-post.com/api/uploadposts/comments/create" \
+  -H "Authorization: Apikey $UPLOAD_POST_API_KEY" -H "Content-Type: application/json" \
+  -d '{"platform":"linkedin","user":"'$UPLOAD_POST_PROFILE'","post_id":"urn:li:share:XXX","message":"Thanks!"}'
+
+# Delete (comment_id; LinkedIn also needs post_id)
+curl -X DELETE "https://api.upload-post.com/api/uploadposts/comments/delete" \
+  -H "Authorization: Apikey $UPLOAD_POST_API_KEY" -H "Content-Type: application/json" \
+  -d '{"platform":"linkedin","user":"'$UPLOAD_POST_PROFILE'","comment_id":"YYY","post_id":"urn:li:share:XXX"}'
+```
+
+Instagram only supports **replies** (must supply `comment_id`). Pagination: `limit` + `after` cursor.
 
 ## Get Pages/Boards
 
