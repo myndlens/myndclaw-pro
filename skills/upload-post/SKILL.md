@@ -7,7 +7,7 @@ metadata:
       {
         "emoji": "📤",
         "requires":
-          { "bins": ["curl"], "env": ["UPLOAD_POST_API_KEY", "UPLOAD_POST_PROFILE"] },
+          { "bins": ["python3"], "env": ["UPLOAD_POST_API_KEY", "UPLOAD_POST_PROFILE"] },
       },
   }
 ---
@@ -25,9 +25,27 @@ variables — they are **never** hardcoded and **never** appear in agent context
 - `UPLOAD_POST_API_KEY` — the user's Upload-Post API key
 - `UPLOAD_POST_PROFILE` — the user's Upload-Post profile name (the `user` parameter)
 
-**ALWAYS** reference them as `$UPLOAD_POST_API_KEY` and `$UPLOAD_POST_PROFILE` in every
-curl command below. **NEVER** paste a literal key or profile. Every post is an EFFECT —
-it only runs after the user has approved the mandate (`social.publish`).
+Every post is an EFFECT — it only runs after the user has approved the mandate
+(`social.publish`).
+
+### Primary entrypoint — use this, not raw curl
+
+A stdlib Python entrypoint reads the key + profile from the environment and performs
+the upload (text / photo / video / document). Map the mandate's channel(s) to platform
+id(s) — **never assume one platform**:
+
+```bash
+python3 scripts/upload.py --kind text  --platform x,linkedin --title "<approved text>"
+python3 scripts/upload.py --kind photo --platform instagram  --title "<caption>" --file a.jpg --file b.jpg
+python3 scripts/upload.py --kind video --platform tiktok,instagram --title "<caption>" --file clip.mp4
+python3 scripts/upload.py --kind document --platform linkedin --title "<title>" --file deck.pdf
+python3 scripts/upload.py --status --request-id <id>   # poll an async/scheduled upload
+```
+
+It prints the API JSON (per-platform `post_id` + `post_url`, and `request_id`/`job_id`
+for async/scheduled). It exits non-zero and LOUD if the key/profile are absent — it never
+posts blind. The raw REST reference below documents the underlying API the script calls;
+do not hand-build curl with a literal key.
 
 ## Documentation
 
