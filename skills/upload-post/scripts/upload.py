@@ -164,23 +164,8 @@ def do_upload(args):
         _fail("--title (the approved caption/text) is required")
     path = ENDPOINTS[args.kind]
 
-    if args.kind == "text":
-        # Upload-Post reads form data (not JSON) — user + platform[] + title as fields.
-        fields = [("user", profile), ("title", args.title)]
-        for p in platforms:
-            fields.append(("platform[]", p))
-        if args.description:
-            fields.append(("description", args.description))
-        if args.scheduled_date:
-            fields.append(("scheduled_date", args.scheduled_date))
-        content_type, data = _multipart(fields, [])
-        status, body = _request("POST", path, api_key,
-                                headers={"Content-Type": content_type}, data=data)
-        _emit(status, body)
-
-    # media kinds: multipart
-    if not args.file:
-        _fail("--file is required for kind=%s" % args.kind)
+    # Upload-Post reads form data (not JSON) for every kind — user + platform[] + title,
+    # plus optional description / scheduled_date / target_linkedin_page_id.
     fields = [("user", profile), ("title", args.title)]
     for p in platforms:
         fields.append(("platform[]", p))
@@ -188,11 +173,21 @@ def do_upload(args):
         fields.append(("description", args.description))
     if args.scheduled_date:
         fields.append(("scheduled_date", args.scheduled_date))
-    if args.async_upload:
-        fields.append(("async_upload", "true"))
-    field = FILE_FIELD[args.kind]
-    files = [(field, f) for f in args.file]
-    content_type, data = _multipart(fields, files)
+    if args.linkedin_page_id:
+        # Post to a LinkedIn COMPANY PAGE (e.g. myndlensai) instead of the personal feed.
+        fields.append(("target_linkedin_page_id", args.linkedin_page_id))
+
+    if args.kind == "text":
+        content_type, data = _multipart(fields, [])
+    else:
+        if not args.file:
+            _fail("--file is required for kind=%s" % args.kind)
+        if args.async_upload:
+            fields.append(("async_upload", "true"))
+        field = FILE_FIELD[args.kind]
+        files = [(field, f) for f in args.file]
+        content_type, data = _multipart(fields, files)
+
     status, body = _request("POST", path, api_key,
                             headers={"Content-Type": content_type}, data=data)
     _emit(status, body)
@@ -210,6 +205,8 @@ def main():
                     help="media file path (repeatable for photos)")
     ap.add_argument("--scheduled-date", dest="scheduled_date",
                     help="ISO-8601 datetime to schedule the post")
+    ap.add_argument("--linkedin-page-id", dest="linkedin_page_id",
+                    help="target LinkedIn company Page id (post to a Page, not the personal feed)")
     ap.add_argument("--async", dest="async_upload", action="store_true",
                     help="background processing (returns request_id to poll)")
     ap.add_argument("--status", action="store_true", help="poll upload status")
