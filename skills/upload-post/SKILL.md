@@ -7,7 +7,7 @@ metadata:
       {
         "emoji": "📤",
         "requires":
-          { "bins": ["python3"], "env": ["UPLOAD_POST_API_KEY", "UPLOAD_POST_PROFILE"] },
+          { "bins": ["python3"], "env": ["OBEGEE_API_URL", "TENANT_ID"] },
       },
   }
 ---
@@ -19,20 +19,21 @@ Post content to multiple social media platforms with a single API call.
 ## MyndLens Integration — READ FIRST
 
 This is a **per-tenant BYOK** skill. The API key and profile are the USER's own,
-provided through their dashboard and injected into this container as environment
-variables — they are **never** hardcoded and **never** appear in agent context:
+added through their dashboard. The tool **fetches the credential itself at invocation**
+from the Control Plane — the key is deliberately **never** placed in the container /
+gateway environment (it must not be visible to the tenant blackbox or any other tool),
+and it **never** appears in agent context.
 
-- `UPLOAD_POST_API_KEY` — the user's Upload-Post API key
-- `UPLOAD_POST_PROFILE` — the user's Upload-Post profile name (the `user` parameter)
-
+You do not handle the key at all: just run the entrypoint. It resolves the tenant's
+Upload-Post key + profile on its own and fails LOUD if Upload-Post is not connected.
 Every post is an EFFECT — it only runs after the user has approved the mandate
 (`social.publish`).
 
 ### Primary entrypoint — use this, not raw curl
 
-A stdlib Python entrypoint reads the key + profile from the environment and performs
-the upload (text / photo / video / document). Map the mandate's channel(s) to platform
-id(s) — **never assume one platform**:
+A stdlib Python entrypoint fetches the tenant's key + profile and performs the upload
+(text / photo / video / document). Map the mandate's channel(s) to platform id(s) —
+**never assume one platform**:
 
 ```bash
 python3 scripts/upload.py --kind text  --platform x,linkedin --title "<approved text>"

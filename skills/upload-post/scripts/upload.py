@@ -7,10 +7,14 @@ and the tenant image needs no pip install. Mirrors the official upload-post
 Python SDK behaviour over the documented REST API.
 
 PER-TENANT BYOK (Doctrine 1: no hardcoding, no silent failure):
-  UPLOAD_POST_API_KEY   the user's own Upload-Post API key   (env, never a literal)
-  UPLOAD_POST_PROFILE   the user's Upload-Post profile name   (the `user` param)
-Both are injected per-tenant from services/vault.py at container spawn. If either
-is missing this exits non-zero with a clear message — it never posts blind.
+  The user's own Upload-Post API key + profile are fetched AT INVOCATION from the
+  Control Plane (GET /api/internal/social-credentials/<tenant> via OBEGEE_API_URL +
+  OBEGEE_INTERNAL_KEY + TENANT_ID, already present in the container). The key is
+  deliberately NOT placed in the container/gateway environment — it must not be
+  visible to the tenant blackbox or other tools; it lives only in THIS process for
+  the duration of the post. If Upload-Post is not connected, this exits non-zero with
+  a clear message — it never posts blind. (UPLOAD_POST_API_KEY/UPLOAD_POST_PROFILE are
+  honored as an env override for local testing only.)
 
 Platform id(s) come from --platform (mapped from the mandate's channel dim) — the
 skill NEVER assumes a single platform (Doctrine 21).
@@ -50,16 +54,40 @@ def _fail(msg, code=2):
     sys.exit(code)
 
 
-def _require_env():
+def _load_credentials():
+    """Resolve the tenant's Upload-Post api_key + profile AT INVOCATION.
+
+    The BYOK key is deliberately NOT placed in the container / gateway environment — it
+    must not be visible to the tenant blackbox or any other tool. Instead THIS tool
+    fetches it on demand from the Control Plane, so the key lives only in this process
+    for the duration of the post. An explicit env override
+    (UPLOAD_POST_API_KEY/UPLOAD_POST_PROFILE) is honored first, for local testing.
+    """
     api_key = os.environ.get("UPLOAD_POST_API_KEY", "").strip()
     profile = os.environ.get("UPLOAD_POST_PROFILE", "").strip()
-    if not api_key:
-        _fail("UPLOAD_POST_API_KEY is not set — the user's key must be injected "
-              "from the vault before this skill can run (no blind post).")
-    if not profile:
-        _fail("UPLOAD_POST_PROFILE is not set — the user's Upload-Post profile "
-              "name must be injected before this skill can run.")
-    return api_key, profile
+    if api_key and profile:
+        return api_key, profile
+
+    base = os.environ.get("OBEGEE_API_URL", "").strip().rstrip("/")
+    tenant = os.environ.get("TENANT_ID", "").strip()
+    internal_key = os.environ.get("OBEGEE_INTERNAL_KEY", "").strip()
+    if not (base and tenant and internal_key):
+        _fail("Upload-Post credential is not in env and the Control Plane is unreachable "
+              "(OBEGEE_API_URL / TENANT_ID / OBEGEE_INTERNAL_KEY missing). Cannot post.")
+    url = "%s/api/internal/social-credentials/%s" % (base, tenant)
+    req = urllib.request.Request(url, headers={"X-Internal-API-Key": internal_key})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        _fail("Control Plane returned HTTP %s fetching the Upload-Post credential" % e.code, code=3)
+    except urllib.error.URLError as e:
+        _fail("cannot reach the Control Plane for the Upload-Post credential: %s" % e.reason, code=3)
+    up = (data or {}).get("upload_post") or {}
+    if not up.get("api_key") or not up.get("profile"):
+        _fail("Upload-Post is not connected for this tenant — the user must add their own "
+              "Upload-Post API key + profile in the dashboard before publishing.")
+    return up["api_key"], up["profile"]
 
 
 def _request(method, path, api_key, *, headers=None, data=None):
@@ -119,7 +147,7 @@ def _emit(status, body):
 
 
 def do_status(args):
-    api_key, _ = _require_env()
+    api_key, _ = _load_credentials()
     if not args.request_id and not args.job_id:
         _fail("--status needs --request-id or --job-id")
     q = "request_id=%s" % args.request_id if args.request_id else "job_id=%s" % args.job_id
@@ -128,7 +156,7 @@ def do_status(args):
 
 
 def do_upload(args):
-    api_key, profile = _require_env()
+    api_key, profile = _load_credentials()
     platforms = [p.strip() for p in args.platform.split(",") if p.strip()]
     if not platforms:
         _fail("--platform is required (map the mandate's channel to platform ids)")
@@ -137,14 +165,17 @@ def do_upload(args):
     path = ENDPOINTS[args.kind]
 
     if args.kind == "text":
-        payload = {"user": profile, "platform": platforms, "title": args.title}
+        # Upload-Post reads form data (not JSON) — user + platform[] + title as fields.
+        fields = [("user", profile), ("title", args.title)]
+        for p in platforms:
+            fields.append(("platform[]", p))
         if args.description:
-            payload["description"] = args.description
+            fields.append(("description", args.description))
         if args.scheduled_date:
-            payload["scheduled_date"] = args.scheduled_date
-        data = json.dumps(payload).encode("utf-8")
+            fields.append(("scheduled_date", args.scheduled_date))
+        content_type, data = _multipart(fields, [])
         status, body = _request("POST", path, api_key,
-                                headers={"Content-Type": "application/json"}, data=data)
+                                headers={"Content-Type": content_type}, data=data)
         _emit(status, body)
 
     # media kinds: multipart
