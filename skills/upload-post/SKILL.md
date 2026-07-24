@@ -7,7 +7,7 @@ metadata:
       {
         "emoji": "📤",
         "requires":
-          { "bins": ["python3"], "env": ["OBEGEE_API_URL", "TENANT_ID"] },
+          { "bins": ["python3"], "env": ["OBEGEE_API_URL", "OBEGEE_INTERNAL_KEY", "TENANT_ID"] },
       },
   }
 ---
