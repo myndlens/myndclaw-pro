@@ -161,8 +161,12 @@ export function startChannelHealthMonitor(deps: ChannelHealthMonitorDeps): Chann
             if (status.running) {
               await channelManager.stopChannel(channelId as ChannelId, accountId);
             }
-            channelManager.resetRestartAttempts(channelId as ChannelId, accountId);
-            await channelManager.startChannel(channelId as ChannelId, accountId);
+            // SB639: preserve the supervisor's crash budget. This call used to reset it every
+            // cycle, which made MAX_RESTART_ATTEMPTS unable to ever latch a dead channel off —
+            // unbounded relink attempts against dead credentials, forever.
+            await channelManager.startChannel(channelId as ChannelId, accountId, {
+              preserveRestartAttempts: true,
+            });
             record.lastRestartAt = now;
             record.restartsThisHour.push({ at: now });
             restartRecords.set(key, record);

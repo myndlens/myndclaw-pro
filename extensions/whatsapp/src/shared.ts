@@ -14,6 +14,7 @@ import {
   type ResolvedWhatsAppAccount,
 } from "./accounts.js";
 import { WhatsAppChannelConfigSchema } from "./config-schema.js";
+import { hasWebCredsSync } from "./creds-files.js";
 import {
   formatWhatsAppConfigAllowFromEntries,
   getChatChannelMeta,
@@ -142,9 +143,13 @@ export function createWhatsAppPluginBase(params: {
       describeAccount: (account) =>
         describeAccountSnapshot({
           account,
-          configured: Boolean(account.authDir),
+          // SB639: authDir always resolves to a path, so Boolean(authDir) was a tautology —
+          // it reported "configured" for accounts with NO credentials on disk, clobbering the
+          // correct value the gateway wrote and looping an empty channel forever (5,593
+          // restarts measured on one deployment). Configured means creds actually exist.
+          configured: Boolean(account.authDir) && hasWebCredsSync(account.authDir),
           extra: {
-            linked: Boolean(account.authDir),
+            linked: Boolean(account.authDir) && hasWebCredsSync(account.authDir),
             dmPolicy: account.dmPolicy,
             allowFrom: account.allowFrom,
           },

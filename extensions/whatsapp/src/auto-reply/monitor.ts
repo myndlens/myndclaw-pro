@@ -38,8 +38,29 @@ import { isLikelyWhatsAppCryptoError } from "./util.js";
 function isNonRetryableWebCloseStatus(statusCode: unknown): boolean {
   // WhatsApp 440 = session conflict ("Unknown Stream Errored (conflict)").
   // This is persistent until the operator resolves the conflicting session.
-  return statusCode === 440;
+  // SB639: 401 = session revoked, 403 = forbidden/banned — both are credential states no
+  // amount of retrying can repair; retrying them from a datacenter IP is the abuse signature
+  // that gets an account restricted. Terminal until a human relinks.
+  return statusCode === 440 || statusCode === 401 || statusCode === 403;
 }
+
+// SB639: a connect-time rejection arrives as Baileys' lastDisconnect ({ error: Boom, date })
+// or as a bare Error. Pull the web status code out of either shape.
+function connectErrorStatusCode(err: unknown): number | undefined {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const rec = err as {
+    error?: { output?: { statusCode?: number } };
+    output?: { statusCode?: number };
+  };
+  const code = rec.error?.output?.statusCode ?? rec.output?.statusCode;
+  return typeof code === "number" ? code : undefined;
+}
+
+// SB639: sustained 503 (service unavailable) is not a blip after this many close/connect
+// failures in a row with no successful connection between them.
+const SERVICE_UNAVAILABLE_BREAKER = 8;
 
 type ActiveConnectionRun = {
   connectionId: string;
@@ -193,6 +214,14 @@ export async function monitorWebChannel(
   process.once("SIGINT", handleSigint);
 
   let reconnectAttempts = 0;
+  // SB639: never reset — the resettable counter feeds backoff; this one is for visibility.
+  // 41 relinks/day rendered as INFO lines is how the storm stayed invisible for weeks.
+  let lifetimeReconnects = 0;
+  let consecutiveServiceUnavailable = 0;
+  const serviceUnavailableBreakerTripped = (statusCode: unknown): boolean => {
+    consecutiveServiceUnavailable = statusCode === 503 ? consecutiveServiceUnavailable + 1 : 0;
+    return consecutiveServiceUnavailable >= SERVICE_UNAVAILABLE_BREAKER;
+  };
 
   while (true) {
     if (stopRequested()) {
@@ -236,36 +265,118 @@ export async function monitorWebChannel(
       return !hasControlCommand(msg.body, cfg);
     };
 
-    const listener = await (listenerFactory ?? monitorWebInbox)({
-      verbose,
-      accountId: account.accountId,
-      authDir: account.authDir,
-      mediaMaxMb: account.mediaMaxMb,
-      sendReadReceipts: account.sendReadReceipts,
-      debounceMs: inboundDebounceMs,
-      shouldDebounce,
-      // SB638 — the health clock now tracks the SOCKET, not the reply pipeline. Before this,
-      // noteInbound fired only from onMessage below, which is reachable only when the
-      // access-control gate ALLOWS a reply; under `dmPolicy: "disabled"` it never fired, so
-      // lastEventAt froze and the health monitor relinked the device forever on phantom
-      // staleness (channel-health-policy stale-socket, 30-min threshold). A message arriving
-      // IS liveness, whatever the reply posture.
-      onIngress: (raw) => {
-        statusController.noteInbound(Date.now());
-        // SB638 — capture every message, in and out, above every policy gate. This store is
-        // what Signal Memory reads; it is the reason the channel no longer has to be taken
-        // DOWN nightly for a bootstrap session to harvest messages.
-        getIngressStore()?.record(account.accountId, raw);
-      },
-      onMessage: async (msg: WebInboundMsg) => {
-        active.handledMessages += 1;
-        active.lastInboundAt = Date.now();
-        statusController.noteInbound(active.lastInboundAt);
-        await onMessage(msg);
-      },
-    });
+    let listener: Awaited<ReturnType<typeof monitorWebInbox>>;
+    try {
+      listener = await (listenerFactory ?? monitorWebInbox)({
+        verbose,
+        accountId: account.accountId,
+        authDir: account.authDir,
+        mediaMaxMb: account.mediaMaxMb,
+        sendReadReceipts: account.sendReadReceipts,
+        debounceMs: inboundDebounceMs,
+        shouldDebounce,
+        // SB638 — the health clock now tracks the SOCKET, not the reply pipeline. Before this,
+        // noteInbound fired only from onMessage below, which is reachable only when the
+        // access-control gate ALLOWS a reply; under `dmPolicy: "disabled"` it never fired, so
+        // lastEventAt froze and the health monitor relinked the device forever on phantom
+        // staleness (channel-health-policy stale-socket, 30-min threshold). A message arriving
+        // IS liveness, whatever the reply posture.
+        onIngress: (raw) => {
+          // SB639 — the per-run clock too: the message-processing watchdog and the backoff
+          // reset both key off active.lastInboundAt, and both must see socket traffic under
+          // a closed reply gate, for the same reason as the health clock above.
+          active.lastInboundAt = Date.now();
+          statusController.noteInbound(active.lastInboundAt);
+          // SB638 — capture every message, in and out, above every policy gate. This store is
+          // what Signal Memory reads; it is the reason the channel no longer has to be taken
+          // DOWN nightly for a bootstrap session to harvest messages.
+          getIngressStore()?.record(account.accountId, raw);
+        },
+        onMessage: async (msg: WebInboundMsg) => {
+          active.handledMessages += 1;
+          active.lastInboundAt = Date.now();
+          statusController.noteInbound(active.lastInboundAt);
+          await onMessage(msg);
+        },
+      });
+    } catch (err) {
+      // SB639 — a rejected CONNECT used to escape this loop entirely: the gateway supervisor
+      // then treated a credential revocation as a crash and hammered relink attempts against
+      // dead creds (the post-restriction storm). Classify here, exactly like a close.
+      const statusCode = connectErrorStatusCode(err);
+      const errorStr = formatError(err);
+      reconnectLogger.warn(
+        {
+          connectionId: active.connectionId,
+          status: statusCode ?? "unknown",
+          reconnectAttempts,
+          lifetimeReconnects,
+          error: errorStr,
+        },
+        "web reconnect: connect attempt failed",
+      );
+      if (isNonRetryableWebCloseStatus(statusCode)) {
+        const loggedOut = statusCode === 401;
+        statusController.noteClose({
+          statusCode,
+          loggedOut,
+          error: errorStr,
+          reconnectAttempts,
+          healthState: loggedOut ? "logged-out" : "conflict",
+        });
+        runtime.error(
+          loggedOut
+            ? `WhatsApp session logged out (401 during connect). Run \`${formatCliCommand("openclaw channels login --channel web")}\` to relink. Stopping web monitoring.`
+            : `WhatsApp Web connect failed (status ${statusCode}: non-retryable). Resolve the session state, then relink with \`${formatCliCommand("openclaw channels login --channel web")}\`. Stopping web monitoring.`,
+        );
+        break;
+      }
+      if (serviceUnavailableBreakerTripped(statusCode)) {
+        statusController.noteClose({
+          statusCode,
+          error: errorStr,
+          reconnectAttempts,
+          healthState: "stopped",
+        });
+        runtime.error(
+          `WhatsApp Web connect failed with 503 x${consecutiveServiceUnavailable} in a row. Stopping web monitoring.`,
+        );
+        break;
+      }
+      reconnectAttempts += 1;
+      lifetimeReconnects += 1;
+      if (reconnectAttempts >= reconnectPolicy.maxAttempts) {
+        statusController.noteClose({
+          statusCode,
+          error: errorStr,
+          reconnectAttempts,
+          healthState: "stopped",
+        });
+        runtime.error(
+          `WhatsApp Web reconnect: max attempts reached (${reconnectAttempts}/${reconnectPolicy.maxAttempts}). Stopping web monitoring.`,
+        );
+        break;
+      }
+      statusController.noteClose({
+        statusCode,
+        error: errorStr,
+        reconnectAttempts,
+        healthState: "reconnecting",
+      });
+      const delay = computeBackoff(reconnectPolicy, reconnectAttempts);
+      runtime.error(
+        `WhatsApp Web connect failed (status ${statusCode ?? "unknown"}). Retry ${reconnectAttempts}/${reconnectPolicy.maxAttempts} in ${formatDurationPrecise(delay)}… (${errorStr})`,
+      );
+      try {
+        await sleep(delay, abortSignal);
+      } catch {
+        break;
+      }
+      continue;
+    }
 
     statusController.noteConnected();
+    consecutiveServiceUnavailable = 0;
 
     // Surface a concise connection event for the next main-session turn/heartbeat.
     const { e164: selfE164 } = readWebSelfId(account.authDir);
@@ -329,6 +440,7 @@ export async function monitorWebChannel(
         const logData = {
           connectionId: active.connectionId,
           reconnectAttempts,
+          lifetimeReconnects,
           messagesHandled: active.handledMessages,
           lastInboundAt: active.lastInboundAt,
           authAgeMs,
@@ -398,8 +510,13 @@ export async function monitorWebChannel(
     ]);
 
     const uptimeMs = Date.now() - active.startedAt;
-    if (uptimeMs > heartbeatSeconds * 1000) {
-      reconnectAttempts = 0; // Healthy stretch; reset the backoff.
+    // SB639: a healthy stretch must be EVIDENCED, not inferred from the clock. Resetting on
+    // any >60s uptime meant computeBackoff always saw attempt=1 ("Retry 1/∞ in 2.2s" forever)
+    // — the loop never escalated. Traffic through this run's socket (the ingress tap fires
+    // for every raw message, in and out) is the evidence; a quiet connection keeps its count.
+    const sawSocketTraffic = (active.lastInboundAt ?? 0) > active.startedAt;
+    if (uptimeMs > heartbeatSeconds * 1000 && sawSocketTraffic) {
+      reconnectAttempts = 0; // Evidenced healthy stretch; reset the backoff.
     }
     statusController.noteReconnectAttempts(reconnectAttempts);
 
@@ -452,11 +569,13 @@ export async function monitorWebChannel(
     }
 
     if (isNonRetryableWebCloseStatus(statusCode)) {
+      const revokedSession = statusCode === 401;
       statusController.noteClose({
         statusCode: numericStatusCode,
+        loggedOut: revokedSession,
         error: errorStr,
         reconnectAttempts,
-        healthState: "conflict",
+        healthState: revokedSession ? "logged-out" : "conflict",
       });
       reconnectLogger.warn(
         {
@@ -467,14 +586,29 @@ export async function monitorWebChannel(
         "web reconnect: non-retryable close status; stopping monitor",
       );
       runtime.error(
-        `WhatsApp Web connection closed (status ${statusCode}: session conflict). Resolve conflicting WhatsApp Web sessions, then relink with \`${formatCliCommand("openclaw channels login --channel web")}\`. Stopping web monitoring.`,
+        `WhatsApp Web connection closed (status ${statusCode}: non-retryable). Resolve the session state, then relink with \`${formatCliCommand("openclaw channels login --channel web")}\`. Stopping web monitoring.`,
+      );
+      await closeListener();
+      break;
+    }
+
+    if (serviceUnavailableBreakerTripped(statusCode)) {
+      statusController.noteClose({
+        statusCode: numericStatusCode,
+        error: errorStr,
+        reconnectAttempts,
+        healthState: "stopped",
+      });
+      runtime.error(
+        `WhatsApp Web connection closed with 503 x${consecutiveServiceUnavailable} in a row. Stopping web monitoring.`,
       );
       await closeListener();
       break;
     }
 
     reconnectAttempts += 1;
-    if (reconnectPolicy.maxAttempts > 0 && reconnectAttempts >= reconnectPolicy.maxAttempts) {
+    lifetimeReconnects += 1;
+    if (reconnectAttempts >= reconnectPolicy.maxAttempts) {
       statusController.noteClose({
         statusCode: numericStatusCode,
         error: errorStr,
@@ -509,13 +643,14 @@ export async function monitorWebChannel(
         connectionId: active.connectionId,
         status: statusCode,
         reconnectAttempts,
-        maxAttempts: reconnectPolicy.maxAttempts || "unlimited",
+        lifetimeReconnects,
+        maxAttempts: reconnectPolicy.maxAttempts,
         delayMs: delay,
       },
       "web reconnect: scheduling retry",
     );
     runtime.error(
-      `WhatsApp Web connection closed (status ${statusCode}). Retry ${reconnectAttempts}/${reconnectPolicy.maxAttempts || "∞"} in ${formatDurationPrecise(delay)}… (${errorStr})`,
+      `WhatsApp Web connection closed (status ${statusCode}). Retry ${reconnectAttempts}/${reconnectPolicy.maxAttempts} in ${formatDurationPrecise(delay)}… (${errorStr})`,
     );
     await closeListener();
     try {

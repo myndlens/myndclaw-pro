@@ -615,7 +615,8 @@ export const OpenClawSchema = z
             maxMs: z.number().positive().optional(),
             factor: z.number().positive().optional(),
             jitter: z.number().min(0).max(1).optional(),
-            maxAttempts: z.number().int().min(0).optional(),
+            // SB639: min(1) — 0 meant "unlimited" and made the reconnect ceiling dead code.
+            maxAttempts: z.number().int().min(1).optional(),
           })
           .strict()
           .optional(),

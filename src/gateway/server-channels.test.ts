@@ -171,6 +171,51 @@ describe("server-channels auto restart", () => {
     expect(startAccount).toHaveBeenCalledTimes(11);
   });
 
+  it("SB639: does not auto-restart a channel that exited in a terminal credential state", async () => {
+    let starts = 0;
+    installTestRegistry(
+      createTestPlugin({
+        startAccount: async (ctx) => {
+          starts += 1;
+          // The plugin's status sink records the revoked session before the task exits —
+          // exactly what the WhatsApp monitor does on a 401.
+          ctx.setStatus({ accountId: ctx.accountId, healthState: "logged-out" });
+        },
+      }),
+    );
+    const manager = createManager();
+
+    await manager.startChannels();
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(starts).toBe(1);
+    const account = manager.getRuntimeSnapshot().channelAccounts.discord?.[DEFAULT_ACCOUNT_ID];
+    expect(account?.running).toBe(false);
+    expect(account?.restartPending).toBe(false);
+  });
+
+  it("SB639: startChannel with preserveRestartAttempts keeps the exhausted crash budget", async () => {
+    const startAccount = vi.fn(async () => {});
+    installTestRegistry(createTestPlugin({ startAccount }));
+    const manager = createManager();
+
+    await manager.startChannels();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(startAccount).toHaveBeenCalledTimes(11); // capped crash loop
+
+    startAccount.mockClear();
+    await manager.startChannel("discord", DEFAULT_ACCOUNT_ID, { preserveRestartAttempts: true });
+    await vi.advanceTimersByTimeAsync(200);
+    // One manual start; the preserved budget is already exhausted, so no new crash loop.
+    expect(startAccount).toHaveBeenCalledTimes(1);
+
+    startAccount.mockClear();
+    await manager.startChannel("discord", DEFAULT_ACCOUNT_ID);
+    await vi.advanceTimersByTimeAsync(200);
+    // A plain operator start resets the budget — the full loop runs again.
+    expect(startAccount).toHaveBeenCalledTimes(11);
+  });
+
   it("does not auto-restart after manual stop during backoff", async () => {
     const startAccount = vi.fn(async () => {});
     installTestRegistry(

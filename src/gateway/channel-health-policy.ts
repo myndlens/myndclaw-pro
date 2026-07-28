@@ -13,6 +13,7 @@ export type ChannelHealthSnapshot = {
   lastStartAt?: number | null;
   reconnectAttempts?: number;
   mode?: string;
+  healthState?: string;
 };
 
 export type ChannelHealthEvaluationReason =
@@ -23,7 +24,8 @@ export type ChannelHealthEvaluationReason =
   | "stuck"
   | "startup-connect-grace"
   | "disconnected"
-  | "stale-socket";
+  | "stale-socket"
+  | "terminal-credential-state";
 
 export type ChannelHealthEvaluation = {
   healthy: boolean;
@@ -60,6 +62,14 @@ export function evaluateChannelHealth(
 ): ChannelHealthEvaluation {
   if (!isManagedAccount(snapshot)) {
     return { healthy: true, reason: "unmanaged" };
+  }
+  // SB639: a revoked or conflicted session is a CREDENTIAL state, not a liveness state.
+  // No restart can repair it, and every attempt is a device re-registration on the user's
+  // account — the abuse signature that gets accounts restricted. A human must relink;
+  // until then the channel is not the monitor's to manage. (Same class as the Telegram/
+  // webhook stale-socket exemption below: don't restart what a restart cannot fix.)
+  if (snapshot.healthState === "logged-out" || snapshot.healthState === "conflict") {
+    return { healthy: true, reason: "terminal-credential-state" };
   }
   if (!snapshot.running) {
     return { healthy: false, reason: "not-running" };

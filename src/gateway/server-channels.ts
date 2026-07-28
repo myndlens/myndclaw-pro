@@ -143,11 +143,14 @@ type StartChannelOptions = {
 export type ChannelManager = {
   getRuntimeSnapshot: () => ChannelRuntimeSnapshot;
   startChannels: () => Promise<void>;
-  startChannel: (channel: ChannelId, accountId?: string) => Promise<void>;
+  startChannel: (
+    channel: ChannelId,
+    accountId?: string,
+    opts?: { preserveRestartAttempts?: boolean },
+  ) => Promise<void>;
   stopChannel: (channel: ChannelId, accountId?: string) => Promise<void>;
   markChannelLoggedOut: (channelId: ChannelId, cleared: boolean, accountId?: string) => void;
   isManuallyStopped: (channelId: ChannelId, accountId: string) => boolean;
-  resetRestartAttempts: (channelId: ChannelId, accountId: string) => void;
   isHealthMonitorEnabled: (channelId: ChannelId, accountId: string) => boolean;
 };
 
@@ -388,6 +391,19 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               if (manuallyStopped.has(rKey)) {
                 return;
               }
+              // SB639: a channel that exited because its session was revoked (401) or
+              // conflicted (440) is DOWN UNTIL A HUMAN RELINKS. Auto-restarting it hammers
+              // device re-registrations against dead credentials — the exact loop that got
+              // a real account restricted. The plugin records the state via its status sink;
+              // honour it here, durably.
+              const exitedState = getRuntime(channelId, id).healthState;
+              if (exitedState === "logged-out" || exitedState === "conflict") {
+                setRuntime(channelId, id, { accountId: id, restartPending: false });
+                log.error?.(
+                  `[${id}] channel exited in terminal state (${exitedState}); not auto-restarting. Relink required.`,
+                );
+                return;
+              }
               const attempt = (restartAttempts.get(rKey) ?? 0) + 1;
               restartAttempts.set(rKey, attempt);
               if (attempt > MAX_RESTART_ATTEMPTS) {
@@ -450,8 +466,19 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     );
   };
 
-  const startChannel = async (channelId: ChannelId, accountId?: string) => {
-    await startChannelInternal(channelId, accountId);
+  const startChannel = async (
+    channelId: ChannelId,
+    accountId?: string,
+    opts?: { preserveRestartAttempts?: boolean },
+  ) => {
+    // SB639: the health monitor restarts with the budget PRESERVED. Before this, every
+    // monitor-initiated restart wiped the supervisor's crash budget (via the fresh-start
+    // reset), so MAX_RESTART_ATTEMPTS could never latch a crash-looping channel off.
+    await startChannelInternal(
+      channelId,
+      accountId,
+      opts?.preserveRestartAttempts ? { preserveRestartAttempts: true } : undefined,
+    );
   };
 
   const stopChannel = async (channelId: ChannelId, accountId?: string) => {
@@ -594,10 +621,6 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     return manuallyStopped.has(restartKey(channelId, accountId));
   };
 
-  const resetRestartAttempts_ = (channelId: ChannelId, accountId: string): void => {
-    restartAttempts.delete(restartKey(channelId, accountId));
-  };
-
   return {
     getRuntimeSnapshot,
     startChannels,
@@ -605,7 +628,6 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     stopChannel,
     markChannelLoggedOut,
     isManuallyStopped: isManuallyStopped_,
-    resetRestartAttempts: resetRestartAttempts_,
     isHealthMonitorEnabled,
   };
 }

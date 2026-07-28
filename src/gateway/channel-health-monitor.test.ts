@@ -13,7 +13,6 @@ function createMockChannelManager(overrides?: Partial<ChannelManager>): ChannelM
     markChannelLoggedOut: vi.fn(),
     isHealthMonitorEnabled: vi.fn(() => true),
     isManuallyStopped: vi.fn(() => false),
-    resetRestartAttempts: vi.fn(),
     ...overrides,
   };
 }
@@ -132,7 +131,9 @@ async function expectRestartedChannel(
 ) {
   const monitor = await startAndRunCheck(manager);
   expect(manager.stopChannel).toHaveBeenCalledWith(channel, accountId);
-  expect(manager.startChannel).toHaveBeenCalledWith(channel, accountId);
+  expect(manager.startChannel).toHaveBeenCalledWith(channel, accountId, {
+    preserveRestartAttempts: true,
+  });
   monitor.stop();
 }
 
@@ -268,7 +269,9 @@ describe("channel-health-monitor", () => {
     );
     const monitor = await startAndRunCheck(manager);
     expect(manager.stopChannel).toHaveBeenCalledWith("discord", "default");
-    expect(manager.startChannel).toHaveBeenCalledWith("discord", "default");
+    expect(manager.startChannel).toHaveBeenCalledWith("discord", "default", {
+      preserveRestartAttempts: true,
+    });
     expect(manager.stopChannel).not.toHaveBeenCalledWith("discord", "quiet");
     expect(manager.startChannel).not.toHaveBeenCalledWith("discord", "quiet");
     monitor.stop();
@@ -290,8 +293,10 @@ describe("channel-health-monitor", () => {
     });
     const monitor = await startAndRunCheck(manager);
     expect(manager.stopChannel).toHaveBeenCalledWith("whatsapp", "default");
-    expect(manager.resetRestartAttempts).toHaveBeenCalledWith("whatsapp", "default");
-    expect(manager.startChannel).toHaveBeenCalledWith("whatsapp", "default");
+    // SB639: the restart budget is PRESERVED — the monitor must not wipe the supervisor's cap.
+    expect(manager.startChannel).toHaveBeenCalledWith("whatsapp", "default", {
+      preserveRestartAttempts: true,
+    });
     monitor.stop();
   });
 
@@ -371,8 +376,9 @@ describe("channel-health-monitor", () => {
       },
     });
     const monitor = await startAndRunCheck(manager);
-    expect(manager.resetRestartAttempts).toHaveBeenCalledWith("discord", "default");
-    expect(manager.startChannel).toHaveBeenCalledWith("discord", "default");
+    expect(manager.startChannel).toHaveBeenCalledWith("discord", "default", {
+      preserveRestartAttempts: true,
+    });
     monitor.stop();
   });
 
@@ -383,8 +389,9 @@ describe("channel-health-monitor", () => {
       },
     });
     const monitor = await startAndRunCheck(manager);
-    expect(manager.resetRestartAttempts).toHaveBeenCalledWith("telegram", "default");
-    expect(manager.startChannel).toHaveBeenCalledWith("telegram", "default");
+    expect(manager.startChannel).toHaveBeenCalledWith("telegram", "default", {
+      preserveRestartAttempts: true,
+    });
     monitor.stop();
   });
 
@@ -398,7 +405,9 @@ describe("channel-health-monitor", () => {
       },
     });
     const monitor = await startAndRunCheck(manager);
-    expect(manager.startChannel).toHaveBeenCalledWith("telegram", "default");
+    expect(manager.startChannel).toHaveBeenCalledWith("telegram", "default", {
+      preserveRestartAttempts: true,
+    });
     monitor.stop();
   });
 
@@ -570,7 +579,9 @@ describe("channel-health-monitor", () => {
         staleEventThresholdMs: customThreshold,
       });
       expect(manager.stopChannel).toHaveBeenCalledWith("slack", "default");
-      expect(manager.startChannel).toHaveBeenCalledWith("slack", "default");
+      expect(manager.startChannel).toHaveBeenCalledWith("slack", "default", {
+        preserveRestartAttempts: true,
+      });
       monitor.stop();
     });
   });

@@ -44,7 +44,10 @@ export function resolveReconnectPolicy(
   merged.maxMs = Math.max(merged.initialMs, merged.maxMs);
   merged.factor = clamp(merged.factor, 1.1, 10);
   merged.jitter = clamp(merged.jitter, 0, 1);
-  merged.maxAttempts = Math.max(0, Math.floor(merged.maxAttempts));
+  // SB639: 0 used to mean "unlimited", silently — which made the max-attempts guard dead
+  // code in production and let a reconnect loop run forever. The floor is 1: every policy
+  // has a real ceiling.
+  merged.maxAttempts = Math.max(1, Math.floor(merged.maxAttempts));
   return merged;
 }
 

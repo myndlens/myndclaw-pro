@@ -15,6 +15,42 @@ function evaluateDiscordHealth(
 }
 
 describe("evaluateChannelHealth", () => {
+  // SB639 — a revoked (401) or conflicted (440) session is a credential state a restart
+  // cannot repair; the monitor must leave it alone until a human relinks. Restarting it
+  // was the mechanism that hammered device re-registrations against dead credentials.
+  it("leaves a logged-out channel alone, even when not running", () => {
+    const evaluation = evaluateDiscordHealth({
+      running: false,
+      enabled: true,
+      configured: true,
+      healthState: "logged-out",
+    });
+    expect(evaluation).toEqual({ healthy: true, reason: "terminal-credential-state" });
+  });
+
+  it("leaves a conflicted channel alone, even when stale", () => {
+    const evaluation = evaluateDiscordHealth({
+      running: true,
+      connected: true,
+      enabled: true,
+      configured: true,
+      healthState: "conflict",
+      lastStartAt: 1_000,
+      lastEventAt: 1_000, // 99s stale — would be stale-socket without the exemption
+    });
+    expect(evaluation).toEqual({ healthy: true, reason: "terminal-credential-state" });
+  });
+
+  it("a non-terminal healthState still gets normal evaluation", () => {
+    const evaluation = evaluateDiscordHealth({
+      running: false,
+      enabled: true,
+      configured: true,
+      healthState: "reconnecting",
+    });
+    expect(evaluation).toEqual({ healthy: false, reason: "not-running" });
+  });
+
   it("treats disabled accounts as healthy unmanaged", () => {
     const evaluation = evaluateChannelHealth(
       {
