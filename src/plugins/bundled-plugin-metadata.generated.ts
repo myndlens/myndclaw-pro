@@ -17998,6 +17998,10 @@ export const GENERATED_BUNDLED_PLUGIN_METADATA = [
                 type: "string",
                 enum: ["pairing", "allowlist", "open", "disabled"],
               },
+              replyPolicy: {
+                type: "string",
+                enum: ["never", "allowlist", "open"],
+              },
               selfChatMode: {
                 type: "boolean",
               },
@@ -18242,6 +18246,10 @@ export const GENERATED_BUNDLED_PLUGIN_METADATA = [
                       default: "pairing",
                       type: "string",
                       enum: ["pairing", "allowlist", "open", "disabled"],
+                    },
+                    replyPolicy: {
+                      type: "string",
+                      enum: ["never", "allowlist", "open"],
                     },
                     selfChatMode: {
                       type: "boolean",

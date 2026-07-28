@@ -9704,7 +9704,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
               },
               maxAttempts: {
                 type: "integer",
-                minimum: 0,
+                minimum: 1,
                 maximum: 9007199254740991,
               },
             },
