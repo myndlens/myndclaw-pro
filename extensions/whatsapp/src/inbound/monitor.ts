@@ -39,6 +39,19 @@ export async function monitorWebInbox(options: {
   accountId: string;
   authDir: string;
   onMessage: (msg: WebInboundMessage) => Promise<void>;
+  /**
+   * SB638 — INGRESS TAP. Fires for EVERY raw message the socket delivers, inbound and
+   * fromMe alike, BEFORE normalisation and BEFORE the access-control gate at :277.
+   *
+   * WHY IT EXISTS: this build welded three concerns to the reply gate — a message had to be
+   * ALLOWED TO BE REPLIED TO before it was captured, before any hook fired, and before the
+   * channel's health clock ticked. So `dmPolicy: "disabled"` (a correct, deliberate posture:
+   * capture the user's world, never answer as them) silently disabled capture AND health.
+   * The health monitor then read a frozen event clock as a dead socket and re-linked the
+   * device ~41x/day, which is what got the account restricted (measured: 78 relinks / 73
+   * stale-triggered in 48h). Capture must be unconditional; only REPLY is a policy question.
+   */
+  onIngress?: (msg: WAMessage) => void;
   mediaMaxMb?: number;
   /** Send read receipts for incoming messages (default true). */
   sendReadReceipts?: boolean;
@@ -469,6 +482,16 @@ export async function monitorWebInbox(options: {
         accountId: options.accountId,
         direction: "inbound",
       });
+      // SB638: the ingress tap — unconditional, above every policy gate. A throw here must
+      // never cost us the message, but it must never be silent either (Doctrine 1).
+      try {
+        options.onIngress?.(msg);
+      } catch (err) {
+        inboundLogger.error(
+          { error: String(err) },
+          "SB638 ingress tap failed — capture and health clock did NOT record this message",
+        );
+      }
       const inbound = await normalizeInboundMessage(msg);
       if (!inbound) {
         continue;

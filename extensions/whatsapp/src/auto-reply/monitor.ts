@@ -205,6 +205,15 @@ export async function monitorWebChannel(
       sendReadReceipts: account.sendReadReceipts,
       debounceMs: inboundDebounceMs,
       shouldDebounce,
+      // SB638 — the health clock now tracks the SOCKET, not the reply pipeline. Before this,
+      // noteInbound fired only from onMessage below, which is reachable only when the
+      // access-control gate ALLOWS a reply; under `dmPolicy: "disabled"` it never fired, so
+      // lastEventAt froze and the health monitor relinked the device forever on phantom
+      // staleness (channel-health-policy stale-socket, 30-min threshold). A message arriving
+      // IS liveness, whatever the reply posture.
+      onIngress: () => {
+        statusController.noteInbound(Date.now());
+      },
       onMessage: async (msg: WebInboundMsg) => {
         active.handledMessages += 1;
         active.lastInboundAt = Date.now();
