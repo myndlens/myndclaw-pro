@@ -175,6 +175,7 @@ export type ChannelAccountSnapshot = {
   lastRunActivityAt?: number | null;
   mode?: string;
   dmPolicy?: string;
+  replyPolicy?: string;
   allowFrom?: string[];
   tokenSource?: string;
   botTokenSource?: string;

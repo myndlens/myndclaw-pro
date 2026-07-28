@@ -151,6 +151,7 @@ export function createWhatsAppPluginBase(params: {
           extra: {
             linked: Boolean(account.authDir) && hasWebCredsSync(account.authDir),
             dmPolicy: account.dmPolicy,
+            replyPolicy: account.replyPolicy,
             allowFrom: account.allowFrom,
           },
         }),

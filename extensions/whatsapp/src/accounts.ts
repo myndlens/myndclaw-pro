@@ -27,6 +27,7 @@ export type ResolvedWhatsAppAccount = {
   groupAllowFrom?: string[];
   groupPolicy?: GroupPolicy;
   dmPolicy?: DmPolicy;
+  replyPolicy?: "never" | "allowlist" | "open";
   textChunkLimit?: number;
   chunkMode?: "length" | "newline";
   mediaMaxMb?: number;
@@ -146,6 +147,7 @@ export function resolveWhatsAppAccount(params: {
     isLegacyAuthDir: isLegacy,
     selfChatMode: merged.selfChatMode,
     dmPolicy: merged.dmPolicy,
+    replyPolicy: merged.replyPolicy,
     allowFrom: merged.allowFrom,
     groupAllowFrom: merged.groupAllowFrom,
     groupPolicy: merged.groupPolicy,

@@ -205,6 +205,9 @@ export function projectSafeChannelAccountSnapshotFields(
     ...(readTrimmedString(record, "dmPolicy")
       ? { dmPolicy: readTrimmedString(record, "dmPolicy") }
       : {}),
+    ...(readTrimmedString(record, "replyPolicy")
+      ? { replyPolicy: readTrimmedString(record, "replyPolicy") }
+      : {}),
     ...(readStringArray(record, "allowFrom")
       ? { allowFrom: readStringArray(record, "allowFrom") }
       : {}),

@@ -43,6 +43,13 @@ type WhatsAppSharedConfig = {
   enabled?: boolean;
   /** Direct message access policy (default: pairing). */
   dmPolicy?: DmPolicy;
+  /**
+   * Reply posture, independent of capture (SB639/W4). When set it overrides dmPolicy:
+   * "never" = capture-only — no auto-reply and no pairing challenge is ever emitted,
+   * structurally; "allowlist"/"open" behave like the matching dmPolicy. Unset = dmPolicy
+   * governs, unchanged.
+   */
+  replyPolicy?: "never" | "allowlist" | "open";
   /** Same-phone setup (bot uses your personal WhatsApp number). */
   selfChatMode?: boolean;
   /** Optional allowlist for WhatsApp direct chats (E.164). */

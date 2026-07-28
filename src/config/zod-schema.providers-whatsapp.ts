@@ -43,6 +43,9 @@ const WhatsAppSharedSchema = z.object({
   messagePrefix: z.string().optional(),
   responsePrefix: z.string().optional(),
   dmPolicy: DmPolicySchema.optional().default("pairing"),
+  // SB639/W4: reply posture, independent of capture. "never" = capture-only; overrides
+  // dmPolicy so no config writer can silently re-enable replies or pairing challenges.
+  replyPolicy: z.enum(["never", "allowlist", "open"]).optional(),
   selfChatMode: z.boolean().optional(),
   allowFrom: z.array(z.string()).optional(),
   defaultTo: z.string().optional(),
@@ -144,6 +147,22 @@ export const WhatsAppConfigSchema = WhatsAppSharedSchema.extend({
       ctx,
       message:
         'channels.whatsapp.dmPolicy="allowlist" requires channels.whatsapp.allowFrom to contain at least one sender ID',
+    });
+    // SB639/W4: replyPolicy overrides dmPolicy at runtime, so its allowlist/open forms need
+    // the same loud config checks — an empty allowlist would silently block everything.
+    enforceOpenDmPolicyAllowFromStar({
+      dmPolicy: value.replyPolicy,
+      allowFrom: value.allowFrom,
+      ctx,
+      message:
+        'channels.whatsapp.replyPolicy="open" requires channels.whatsapp.allowFrom to include "*"',
+    });
+    enforceAllowlistDmPolicyAllowFrom({
+      dmPolicy: value.replyPolicy,
+      allowFrom: value.allowFrom,
+      ctx,
+      message:
+        'channels.whatsapp.replyPolicy="allowlist" requires channels.whatsapp.allowFrom to contain at least one sender ID',
     });
     if (!value.accounts) {
       return;

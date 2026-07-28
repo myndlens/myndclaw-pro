@@ -59,7 +59,15 @@ export async function checkInboundAccessControl(params: {
     cfg,
     accountId: params.accountId,
   });
-  const dmPolicy = account.dmPolicy ?? "pairing";
+  // SB639/W4: replyPolicy is the reply posture, independent of capture, and it OVERRIDES
+  // dmPolicy. "never" is structural capture-only: the decision below can only be "block",
+  // so the pairing-challenge branch is unreachable — no config writer can re-enable replies
+  // by flipping dmPolicy. (The 2026-07-04 incident: the agent answered every inbound as the
+  // user, and pairing challenges were messaged to his contacts. Four external writers then
+  // had to agree on dmPolicy=disabled forever. This is that agreement, in one place, ours.)
+  const replyPolicy = account.replyPolicy;
+  const dmPolicy =
+    replyPolicy === "never" ? "disabled" : (replyPolicy ?? account.dmPolicy ?? "pairing");
   const configuredAllowFrom = account.allowFrom ?? [];
   const storeAllowFrom = await readStoreAllowFromForDmPolicy({
     provider: "whatsapp",
@@ -90,7 +98,8 @@ export async function checkInboundAccessControl(params: {
   const defaultGroupPolicy = resolveDefaultGroupPolicy(cfg);
   const { groupPolicy, providerMissingFallbackApplied } = resolveWhatsAppRuntimeGroupPolicy({
     providerConfigPresent: cfg.channels?.whatsapp !== undefined,
-    groupPolicy: account.groupPolicy,
+    // SB639/W4: capture-only means groups too — no reply surface stays open under "never".
+    groupPolicy: replyPolicy === "never" ? "disabled" : account.groupPolicy,
     defaultGroupPolicy,
   });
   warnMissingProviderGroupPolicyFallbackOnce({
