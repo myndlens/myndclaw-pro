@@ -18,6 +18,7 @@ import {
 import { resolveWhatsAppAccount, resolveWhatsAppMediaMaxBytes } from "../accounts.js";
 import { setActiveWebListener } from "../active-listener.js";
 import { monitorWebInbox } from "../inbound.js";
+import { type IngressStore, openIngressStore } from "../inbound/ingress-store.js";
 import {
   computeBackoff,
   newConnectionId,
@@ -62,6 +63,44 @@ function createActiveConnectionRun(lastInboundAt: number | null): ActiveConnecti
     unregisterUnhandled: null,
     backgroundTasks: new Set<Promise<unknown>>(),
   };
+}
+
+/**
+ * SB638 — one capture store per process, opened lazily on the first message.
+ *
+ * Lazy because a failure to open must not stop the channel from RUNNING: delivery and the
+ * health clock are independent of capture. It is retried on the next message, and the failure
+ * is loud each time it is attempted (Doctrine 1) — a silently uncaptured channel is exactly
+ * the state that produced the incident this fixes.
+ */
+let ingressStore: IngressStore | null = null;
+let ingressStoreFailed = false;
+
+function getIngressStore(): IngressStore | null {
+  if (ingressStore) {
+    return ingressStore;
+  }
+  try {
+    ingressStore = openIngressStore({
+      onError: (err) => {
+        getChildLogger({ module: "wa-ingress-store" }).error(
+          { error: String(err) },
+          "SB638 capture write FAILED — this message did not reach Signal Memory",
+        );
+      },
+    });
+    ingressStoreFailed = false;
+    return ingressStore;
+  } catch (err) {
+    if (!ingressStoreFailed) {
+      getChildLogger({ module: "wa-ingress-store" }).error(
+        { error: String(err) },
+        "SB638 capture store could not be opened — WhatsApp capture is DOWN (delivery unaffected)",
+      );
+      ingressStoreFailed = true;
+    }
+    return null;
+  }
 }
 
 export async function monitorWebChannel(
@@ -211,8 +250,12 @@ export async function monitorWebChannel(
       // lastEventAt froze and the health monitor relinked the device forever on phantom
       // staleness (channel-health-policy stale-socket, 30-min threshold). A message arriving
       // IS liveness, whatever the reply posture.
-      onIngress: () => {
+      onIngress: (raw) => {
         statusController.noteInbound(Date.now());
+        // SB638 — capture every message, in and out, above every policy gate. This store is
+        // what Signal Memory reads; it is the reason the channel no longer has to be taken
+        // DOWN nightly for a bootstrap session to harvest messages.
+        getIngressStore()?.record(account.accountId, raw);
       },
       onMessage: async (msg: WebInboundMsg) => {
         active.handledMessages += 1;
