@@ -100,6 +100,24 @@ export const AgentParamsSchema = Type.Object(
     inputProvenance: Type.Optional(InputProvenanceSchema),
     idempotencyKey: NonEmptyString,
     label: Type.Optional(SessionLabelString),
+    /**
+     * SB664 / MyndLens DECISIONS Addendum 59 (Captain, 2026-08-11): "Change MyndClaw
+     * so that it wil accept all important fields of the MA Emit, so that the Outcome
+     * delivery is Precise and repeatable."
+     *
+     * The Mandate Agent's emit, carried as DECLARED DATA. Before this the whole
+     * contract was five fields and everything the upstream pipeline determined
+     * either rode as prose inside `message` or never left the Control Plane at all.
+     *
+     * DELIBERATELY PERMISSIVE INSIDE (`additionalProperties: true`). The outer
+     * AgentParamsSchema is `additionalProperties: false`, so every new top-level
+     * field costs a fork release; a closed inner shape would put the MA emit on that
+     * same treadmill, and the emit is expected to grow. The gateway TRANSPORTS this
+     * object — it does not interpret it, validate its semantics, or decide which
+     * parts the model may see. Adding a field upstream must never require a gateway
+     * deploy.
+     */
+    mandate: Type.Optional(Type.Object({}, { additionalProperties: true })),
   },
   { additionalProperties: false },
 );

@@ -36,6 +36,7 @@ import {
 import { resolveAssistantIdentity } from "../assistant-identity.js";
 import { parseMessageWithAttachments } from "../chat-attachments.js";
 import { resolveAssistantAvatarUrl } from "../control-ui-shared.js";
+import { mergeMandateIntoSystemPrompt } from "../mandate-context.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
@@ -270,6 +271,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       groupSpace?: string;
       lane?: string;
       extraSystemPrompt?: string;
+      mandate?: unknown; // SB664 / Addendum 59 — the MA emit, carried verbatim
       internalEvents?: AgentInternalEvent[];
       idempotencyKey: string;
       timeout?: number;
@@ -745,7 +747,12 @@ export const agentHandlers: GatewayRequestHandlers = {
         messageChannel: originMessageChannel,
         runId,
         lane: request.lane,
-        extraSystemPrompt: request.extraSystemPrompt,
+        // SB664 / Addendum 59 — the MA emit rides into the system prompt as declared
+        // data. Merge, never replace: a caller-supplied extraSystemPrompt keeps its slot.
+        extraSystemPrompt: mergeMandateIntoSystemPrompt(
+          request.extraSystemPrompt,
+          (request as { mandate?: unknown }).mandate,
+        ),
         internalEvents: request.internalEvents,
         inputProvenance,
         // Internal-only: allow workspace override for spawned subagent runs.
