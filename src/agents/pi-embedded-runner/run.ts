@@ -1234,7 +1234,7 @@ export async function runEmbeddedPiAgent(
                   : undefined) ||
                 lastAssistant?.errorMessage?.trim() ||
                 (timedOut
-                  ? "LLM request timed out."
+                  ? "Run timed out (run-budget watchdog aborted the in-flight LLM request)."
                   : rateLimitFailure
                     ? "LLM request rate limited."
                     : billingFailure

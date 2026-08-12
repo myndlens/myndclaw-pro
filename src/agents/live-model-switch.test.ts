@@ -90,6 +90,45 @@ describe("live model switch", () => {
     });
   });
 
+  it("SB665e: no explicit override means NO live switch — the agent default is not a switch", async () => {
+    // The old fallback-to-default made every model-fallback candidate read as
+    // a live switch, and the pre-attempt guard vetoed the whole fallback lane
+    // (live: si_3 terminals, 2026-08-12). An entry with no override fields —
+    // the shape of every mandate session measured on the runtime VPS — must
+    // resolve to null.
+    state.loadSessionStoreMock.mockReturnValue({
+      main: { sessionId: "s-1", model: "gpt-oss-120b", modelProvider: "cerebras" },
+    });
+
+    const { resolveLiveSessionModelSelection } = await loadModule();
+
+    expect(
+      resolveLiveSessionModelSelection({
+        cfg: { session: { store: "/tmp/custom-store.json" } },
+        sessionKey: "main",
+        agentId: "reply",
+        defaultProvider: "anthropic",
+        defaultModel: "claude-opus-4-6",
+      }),
+    ).toBeNull();
+  });
+
+  it("SB665e: a missing entry resolves to null, never to the default-as-switch", async () => {
+    state.loadSessionStoreMock.mockReturnValue({});
+
+    const { resolveLiveSessionModelSelection } = await loadModule();
+
+    expect(
+      resolveLiveSessionModelSelection({
+        cfg: { session: { store: "/tmp/custom-store.json" } },
+        sessionKey: "absent",
+        agentId: "reply",
+        defaultProvider: "anthropic",
+        defaultModel: "claude-opus-4-6",
+      }),
+    ).toBeNull();
+  });
+
   it("queues a live switch only when an active run was aborted", async () => {
     state.abortEmbeddedPiRunMock.mockReturnValue(true);
 

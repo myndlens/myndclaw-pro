@@ -48,6 +48,21 @@ export function resolveLiveSessionModelSelection(params: {
     agentId,
   });
   const entry = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+  // SB665e (myndlens, Addendum 72): a live switch exists ONLY when the session
+  // entry carries an EXPLICIT override (written by the user /model lane,
+  // auto-reply/reply/session.ts:482). The old form fell back to the agent
+  // default, so during model-fallback every non-default candidate read as a
+  // "switch" and the run.ts pre-attempt guard vetoed the entire fallback lane
+  // (measured live: si_3 terminals on mandate_3cab8cf7 / mandate_ca463cc4,
+  // 2026-08-12 — zero fallback attempts ever ran). No override -> no switch.
+  const hasExplicitOverride = Boolean(
+    entry?.providerOverride?.trim() ||
+    entry?.modelOverride?.trim() ||
+    entry?.authProfileOverride?.trim(),
+  );
+  if (!hasExplicitOverride) {
+    return null;
+  }
   const provider = entry?.providerOverride?.trim() || defaultModelRef.provider;
   const model = entry?.modelOverride?.trim() || defaultModelRef.model;
   const authProfileId = entry?.authProfileOverride?.trim() || undefined;
