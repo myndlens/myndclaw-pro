@@ -142,19 +142,3 @@ export function renderMandateContext(mandate: unknown): string | null {
   }
   return lines.join("\n");
 }
-
-/**
- * Merge the mandate block with any caller-supplied extraSystemPrompt.
- * The caller's own text wins the top slot; the mandate follows it.
- */
-export function mergeMandateIntoSystemPrompt(
-  extraSystemPrompt: string | undefined,
-  mandate: unknown,
-): string | undefined {
-  const block = renderMandateContext(mandate);
-  if (!block) {
-    return extraSystemPrompt;
-  }
-  const head = (extraSystemPrompt ?? "").trim();
-  return head ? `${head}\n\n${block}` : block;
-}

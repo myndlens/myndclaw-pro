@@ -104,6 +104,7 @@ export async function runClaudeCliAgent(params: {
   timeoutMs: number;
   runId: string;
   extraSystemPrompt?: string;
+  mandateContext?: string;
   ownerNumbers?: string[];
   claudeSessionId?: string;
   images?: ImageContent[];
@@ -122,6 +123,7 @@ export async function runClaudeCliAgent(params: {
     timeoutMs: params.timeoutMs,
     runId: params.runId,
     extraSystemPrompt: params.extraSystemPrompt,
+    mandateContext: params.mandateContext,
     ownerNumbers: params.ownerNumbers,
     cliSessionId: params.claudeSessionId,
     images: params.images,

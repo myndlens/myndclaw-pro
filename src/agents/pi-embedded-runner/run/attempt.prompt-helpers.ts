@@ -136,6 +136,7 @@ export function buildAfterTurnRuntimeContext(params: {
     | "reasoningLevel"
     | "bashElevated"
     | "extraSystemPrompt"
+    | "mandateContext"
     | "ownerNumbers"
     | "authProfileId"
   >;
@@ -163,6 +164,7 @@ export function buildAfterTurnRuntimeContext(params: {
     reasoningLevel: params.attempt.reasoningLevel,
     bashElevated: params.attempt.bashElevated,
     extraSystemPrompt: params.attempt.extraSystemPrompt,
+    mandateContext: params.attempt.mandateContext,
     ownerNumbers: params.attempt.ownerNumbers,
   });
 }

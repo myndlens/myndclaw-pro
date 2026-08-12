@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeMandateIntoSystemPrompt, renderMandateContext } from "./mandate-context.js";
+import { renderMandateContext } from "./mandate-context.js";
 
 /**
  * SB664 / MyndLens DECISIONS Addendum 59 — pins on the MA-emit renderer.
@@ -95,20 +95,9 @@ describe("renderMandateContext", () => {
   });
 });
 
-describe("mergeMandateIntoSystemPrompt", () => {
-  it("passes the caller's prompt through untouched when there is no mandate", () => {
-    expect(mergeMandateIntoSystemPrompt("keep me", undefined)).toBe("keep me");
-    expect(mergeMandateIntoSystemPrompt(undefined, undefined)).toBeUndefined();
-  });
-
-  it("keeps the caller's text in the top slot and appends the mandate", () => {
-    const merged = mergeMandateIntoSystemPrompt("caller first", { mandate_id: "m1" })!;
-    expect(merged.indexOf("caller first")).toBe(0);
-    expect(merged.indexOf("mandate_id:")).toBeGreaterThan(merged.indexOf("caller first"));
-  });
-
-  it("returns the mandate alone when the caller supplied nothing", () => {
-    const merged = mergeMandateIntoSystemPrompt(undefined, { mandate_id: "m1" })!;
-    expect(merged.startsWith("## THE MANDATE")).toBe(true);
+describe("renderMandateContext header", () => {
+  it("carries its OWN section header so system-prompt never wraps it in Group Chat Context", () => {
+    const out = renderMandateContext({ mandate_id: "m1" })!;
+    expect(out.startsWith("## THE MANDATE")).toBe(true);
   });
 });

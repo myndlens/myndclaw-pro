@@ -24,6 +24,7 @@ export type EmbeddedCompactionRuntimeContext = {
   reasoningLevel?: ReasoningLevel;
   bashElevated?: ExecElevatedDefaults;
   extraSystemPrompt?: string;
+  mandateContext?: string;
   ownerNumbers?: string[];
 };
 
@@ -48,6 +49,7 @@ export function buildEmbeddedCompactionRuntimeContext(params: {
   reasoningLevel?: ReasoningLevel;
   bashElevated?: ExecElevatedDefaults;
   extraSystemPrompt?: string;
+  mandateContext?: string;
   ownerNumbers?: string[];
 }): EmbeddedCompactionRuntimeContext {
   return {
@@ -71,6 +73,7 @@ export function buildEmbeddedCompactionRuntimeContext(params: {
     reasoningLevel: params.reasoningLevel,
     bashElevated: params.bashElevated,
     extraSystemPrompt: params.extraSystemPrompt,
+    mandateContext: params.mandateContext,
     ownerNumbers: params.ownerNumbers,
   };
 }

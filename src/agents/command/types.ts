@@ -82,6 +82,8 @@ export type AgentCommandOpts = {
   lane?: string;
   runId?: string;
   extraSystemPrompt?: string;
+  /** SB664 / Addendum 59 — the rendered MA-emit block; gets its OWN system-prompt section. */
+  mandateContext?: string;
   internalEvents?: AgentInternalEvent[];
   inputProvenance?: InputProvenance;
   /** Per-call stream param overrides (best-effort). */

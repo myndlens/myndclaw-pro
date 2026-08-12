@@ -20,6 +20,8 @@ export type RunCliAgentParams = {
   timeoutMs: number;
   runId: string;
   extraSystemPrompt?: string;
+  /** SB664 — rendered MA-emit block; carries its own header. */
+  mandateContext?: string;
   streamParams?: import("../command/types.js").AgentStreamParams;
   ownerNumbers?: string[];
   cliSessionId?: string;

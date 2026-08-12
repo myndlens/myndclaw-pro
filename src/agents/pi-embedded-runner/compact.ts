@@ -167,6 +167,7 @@ export type CompactEmbeddedPiSessionParams = {
   lane?: string;
   enqueue?: typeof enqueueCommand;
   extraSystemPrompt?: string;
+  mandateContext?: string;
   ownerNumbers?: string[];
   abortSignal?: AbortSignal;
   /** Allow runtime plugins for this compaction to late-bind the gateway subagent. */
@@ -622,6 +623,7 @@ export async function compactEmbeddedPiSessionDirect(
       defaultThinkLevel: params.thinkLevel,
       reasoningLevel: params.reasoningLevel ?? "off",
       extraSystemPrompt: params.extraSystemPrompt,
+      mandateContext: params.mandateContext,
       ownerNumbers: params.ownerNumbers,
       ownerDisplay: ownerDisplay.ownerDisplay,
       ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,

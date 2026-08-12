@@ -13,6 +13,7 @@ export function buildEmbeddedSystemPrompt(params: {
   defaultThinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
   extraSystemPrompt?: string;
+  mandateContext?: string;
   ownerNumbers?: string[];
   ownerDisplay?: "raw" | "hash";
   ownerDisplaySecret?: string;
@@ -58,6 +59,7 @@ export function buildEmbeddedSystemPrompt(params: {
     defaultThinkLevel: params.defaultThinkLevel,
     reasoningLevel: params.reasoningLevel,
     extraSystemPrompt: params.extraSystemPrompt,
+    mandateContext: params.mandateContext,
     ownerNumbers: params.ownerNumbers,
     ownerDisplay: params.ownerDisplay,
     ownerDisplaySecret: params.ownerDisplaySecret,

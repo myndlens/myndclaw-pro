@@ -36,7 +36,7 @@ import {
 import { resolveAssistantIdentity } from "../assistant-identity.js";
 import { parseMessageWithAttachments } from "../chat-attachments.js";
 import { resolveAssistantAvatarUrl } from "../control-ui-shared.js";
-import { mergeMandateIntoSystemPrompt } from "../mandate-context.js";
+import { renderMandateContext } from "../mandate-context.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "../protocol/client-info.js";
 import {
@@ -747,12 +747,13 @@ export const agentHandlers: GatewayRequestHandlers = {
         messageChannel: originMessageChannel,
         runId,
         lane: request.lane,
-        // SB664 / Addendum 59 — the MA emit rides into the system prompt as declared
-        // data. Merge, never replace: a caller-supplied extraSystemPrompt keeps its slot.
-        extraSystemPrompt: mergeMandateIntoSystemPrompt(
-          request.extraSystemPrompt,
-          (request as { mandate?: unknown }).mandate,
-        ),
+        extraSystemPrompt: request.extraSystemPrompt,
+        // SB664 / Addendum 59 — the MA emit, rendered once here and given its OWN
+        // system-prompt section (system-prompt.ts). The first cut merged it into
+        // extraSystemPrompt, which filed the mandate under "## Group Chat Context"
+        // (system-prompt.ts contextHeader) — the antagonistic pass caught it.
+        mandateContext:
+          renderMandateContext((request as { mandate?: unknown }).mandate) ?? undefined,
         internalEvents: request.internalEvents,
         inputProvenance,
         // Internal-only: allow workspace override for spawned subagent runs.

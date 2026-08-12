@@ -178,6 +178,8 @@ export function buildAgentSystemPrompt(params: {
   defaultThinkLevel?: ThinkLevel;
   reasoningLevel?: ReasoningLevel;
   extraSystemPrompt?: string;
+  /** SB664 — rendered MA-emit block (carries its own `## THE MANDATE` header). */
+  mandateContext?: string;
   ownerNumbers?: string[];
   ownerDisplay?: OwnerIdDisplay;
   ownerDisplaySecret?: string;
@@ -332,6 +334,7 @@ export function buildAgentSystemPrompt(params: {
   const execToolName = resolveToolName("exec");
   const processToolName = resolveToolName("process");
   const extraSystemPrompt = params.extraSystemPrompt?.trim();
+  const mandateContext = params.mandateContext?.trim();
   const ownerDisplay = params.ownerDisplay === "hash" ? "hash" : "raw";
   const ownerLine = buildOwnerIdentityLine(
     params.ownerNumbers ?? [],
@@ -566,6 +569,15 @@ export function buildAgentSystemPrompt(params: {
     ...buildVoiceSection({ isMinimal, ttsHint: params.ttsHint }),
   ];
 
+  if (mandateContext) {
+    // SB664 / MyndLens Addendum 59 — the mandate is DECLARED context, not chat
+    // context. It carries its own `## THE MANDATE` header from the renderer
+    // (gateway/mandate-context.ts); wrapping it in the Group Chat Context header
+    // below filed the user's mandate as chat chatter — the antagonistic-pass
+    // finding this section exists to fix. Rendered before extraSystemPrompt so
+    // the mandate outranks per-message context.
+    lines.push(mandateContext, "");
+  }
   if (extraSystemPrompt) {
     // Use "Subagent Context" header for minimal mode (subagents), otherwise "Group Chat Context"
     const contextHeader =

@@ -54,7 +54,13 @@ export async function prepareCliRunContext(
     config: params.config,
     warn: (message) => cliBackendLog.warn(message),
   });
-  const extraSystemPrompt = params.extraSystemPrompt?.trim() ?? "";
+  // SB664 — the CLI backend consumes ONE system-prompt text, so the mandate block
+  // (which carries its own `## THE MANDATE` header) is appended here. It thereby
+  // also enters the session-reuse hash below: a changed mandate rebinds the
+  // session instead of silently reusing one built for a different mandate.
+  const extraSystemPrompt = [params.extraSystemPrompt?.trim(), params.mandateContext?.trim()]
+    .filter(Boolean)
+    .join("\n\n");
   const extraSystemPromptHash = hashCliSessionText(extraSystemPrompt);
   const reusableCliSession = resolveCliSessionReuse({
     binding:
