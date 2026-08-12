@@ -215,6 +215,21 @@ function sameModelCandidate(a: ModelCandidate, b: ModelCandidate): boolean {
   return a.provider === b.provider && a.model === b.model;
 }
 
+/**
+ * SB665c (myndlens) — name-based check, mirroring command-queue.ts, so this
+ * module needs no import from live-model-switch.js (import-cycle safe).
+ */
+function isLiveSessionModelSwitchErrorLike(
+  err: unknown,
+): err is Error & { provider: string; model: string } {
+  return (
+    err instanceof Error &&
+    err.name === "LiveSessionModelSwitchError" &&
+    typeof (err as { provider?: unknown }).provider === "string" &&
+    typeof (err as { model?: unknown }).model === "string"
+  );
+}
+
 function throwFallbackFailureSummary(params: {
   attempts: FallbackAttempt[];
   candidates: ModelCandidate[];
@@ -607,6 +622,10 @@ export async function runWithModelFallback<T>(params: {
   const attempts: FallbackAttempt[] = [];
   let lastError: unknown;
   const cooldownProbeUsedProviders = new Set<string>();
+  // SB665c (myndlens): selections already adopted from a live-session model
+  // switch signal — each distinct selection is adopted at most ONCE, so a
+  // repeating signal can never loop the run.
+  const adoptedSwitchKeys = new Set<string>();
 
   const hasFallbackCandidates = candidates.length > 1;
 
@@ -760,6 +779,54 @@ export async function runWithModelFallback<T>(params: {
       return attemptRun.success;
     }
     const err = attemptRun.error;
+    // ── SB665c (myndlens) — A LIVE-SESSION MODEL SWITCH IS CONTROL FLOW, NOT
+    // A FAILURE. The pre-attempt guard in pi-embedded-runner/run.ts throws it
+    // when the session store's persisted selection (e.g. written by a timeout
+    // failover on a PREVIOUS run) differs from this attempt's model. The
+    // auto-reply lane consumes it and re-runs on the new model
+    // (agent-runner-execution.ts); this loop treated it as a failed candidate
+    // and walked its configured chain — no chain candidate could ever satisfy
+    // the guard, so every attempt threw BEFORE any model was called and the
+    // run-agent lane surfaced "LiveSessionModelSwitchError" as the terminal.
+    // Live cost: exec_mandate_2b00dd66 si_2/si_3 (2026-08-12) — mandate
+    // failed with zero model calls on both steps. Adopt the requested
+    // selection as the IMMEDIATE next candidate; adoption is bounded per
+    // distinct selection (adoptedSwitchKeys) so ping-pong is impossible.
+    if (isLiveSessionModelSwitchErrorLike(err)) {
+      const switchKey = modelKey(err.provider, err.model);
+      if (!adoptedSwitchKeys.has(switchKey)) {
+        adoptedSwitchKeys.add(switchKey);
+        candidates.splice(i + 1, 0, { provider: err.provider, model: err.model });
+        log.info(
+          `adopting live session model switch: ${sanitizeForLog(candidate.provider)}/${sanitizeForLog(candidate.model)} -> ${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)}`,
+        );
+        logModelFallbackDecision({
+          decision: "candidate_failed",
+          runId: params.runId,
+          requestedProvider: params.provider,
+          requestedModel: params.model,
+          candidate,
+          attempt: i + 1,
+          total: candidates.length,
+          reason: "unknown",
+          error: `live session model switch requested -> ${err.provider}/${err.model}`,
+          nextCandidate: candidates[i + 1],
+          isPrimary,
+          requestedModelMatched: requestedModel,
+          fallbackConfigured: hasFallbackCandidates,
+        });
+        continue;
+      }
+      // Already adopted once: fall through — the signal is now a real error.
+      lastError = err;
+      attempts.push({
+        provider: candidate.provider,
+        model: candidate.model,
+        error: err.message,
+        reason: "unknown",
+      });
+      continue;
+    }
     {
       if (transientProbeProviderForAttempt) {
         const probeFailureReason = describeFailoverError(err).reason;
