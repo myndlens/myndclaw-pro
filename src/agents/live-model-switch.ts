@@ -57,8 +57,8 @@ export function resolveLiveSessionModelSelection(params: {
   // 2026-08-12 — zero fallback attempts ever ran). No override -> no switch.
   const hasExplicitOverride = Boolean(
     entry?.providerOverride?.trim() ||
-    entry?.modelOverride?.trim() ||
-    entry?.authProfileOverride?.trim(),
+      entry?.modelOverride?.trim() ||
+      entry?.authProfileOverride?.trim(),
   );
   if (!hasExplicitOverride) {
     return null;
