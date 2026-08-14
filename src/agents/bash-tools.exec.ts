@@ -9,7 +9,11 @@ import {
   resolveShellEnvFallbackTimeoutMs,
 } from "../infra/shell-env.js";
 import { logInfo } from "../logger.js";
-import { parseAgentSessionKey, resolveAgentIdFromSessionKey } from "../routing/session-key.js";
+import {
+  deriveMandateIdFromSessionKey,
+  parseAgentSessionKey,
+  resolveAgentIdFromSessionKey,
+} from "../routing/session-key.js";
 import { markBackgrounded } from "./bash-process-registry.js";
 import { processGatewayAllowlist } from "./bash-tools.exec-host-gateway.js";
 import { executeNodeHostCommand } from "./bash-tools.exec-host-node.js";
@@ -439,6 +443,17 @@ export function createExecTool(
               containerWorkdir: containerWorkdir ?? sandbox.containerWorkdir,
             })
           : (hostEnvResult?.env ?? inheritedBaseEnv);
+
+      // MyndLens SB674 (Addendum 100) — a mandate-run session carries the CP
+      // execution id in its own session key; local skills (cp_receipt.py) read
+      // MYNDLENS_MANDATE_ID so their evidence receipts bind to the mandate even
+      // when the model omits --mandate (proven 5/5 on a live run). Derived
+      // per-exec from the session identity: no process-global state, no race
+      // between concurrent mandates. An explicit params.env override wins.
+      const myndlensMandateId = deriveMandateIdFromSessionKey(defaults?.sessionKey);
+      if (myndlensMandateId && env.MYNDLENS_MANDATE_ID === undefined) {
+        env.MYNDLENS_MANDATE_ID = myndlensMandateId;
+      }
 
       if (!sandbox && host === "gateway" && !params.env?.PATH) {
         const shellPath = getShellPathFromLoginShell({

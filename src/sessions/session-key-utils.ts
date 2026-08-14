@@ -32,6 +32,40 @@ export function parseAgentSessionKey(
 }
 
 /**
+ * MyndLens SB674 (DECISIONS Addendum 100) — deterministic receipt binding.
+ *
+ * A mandate-run session key embeds the execution id the Control Plane minted:
+ *   agent:<cat>:mandate:exec_<mandate_id>[:...]
+ * (CP mints execution_id = "exec_" + mandate_id — mandate_dispatch.py:300/473;
+ * the channel service prefixes the agent namespace; live-verified on
+ * `agent:cat_investing_markets:mandate:exec_mandate_59438f37e6594e72:...`).
+ *
+ * Local skills self-record evidence receipts keyed by the MANDATE id
+ * (cp_receipt.py). The agent proved it cannot be trusted to append --mandate
+ * (5/5 omissions on a live run), so the exec layer derives the id from the
+ * SESSION identity and injects it per exec — no process-global, no race.
+ *
+ * Case is PRESERVED (unlike parseAgentSessionKey): the id must reach the
+ * receipt byte-identical to what CP minted. Returns undefined for non-mandate
+ * sessions — callers must inject nothing in that case.
+ */
+export function deriveMandateIdFromSessionKey(
+  sessionKey: string | undefined | null,
+): string | undefined {
+  const raw = (sessionKey ?? "").trim();
+  if (!raw) {
+    return undefined;
+  }
+  const match = /(?:^|:)mandate:([^:]+)/.exec(raw);
+  if (!match) {
+    return undefined;
+  }
+  const segment = match[1];
+  const id = segment.startsWith("exec_") ? segment.slice("exec_".length) : segment;
+  return id || undefined;
+}
+
+/**
  * Best-effort chat-type extraction from session keys across canonical and legacy formats.
  */
 export function deriveSessionChatType(sessionKey: string | undefined | null): SessionKeyChatType {

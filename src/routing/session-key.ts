@@ -3,6 +3,7 @@ import { parseAgentSessionKey, type ParsedAgentSessionKey } from "../sessions/se
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "./account-id.js";
 
 export {
+  deriveMandateIdFromSessionKey,
   getSubagentDepth,
   isCronSessionKey,
   isAcpSessionKey,
