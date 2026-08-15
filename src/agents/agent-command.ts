@@ -39,6 +39,7 @@ import { resolveMessageChannel } from "../utils/message-channel.js";
 import {
   listAgentIds,
   resolveAgentDir,
+  resolveAgentThinkingDefault,
   resolveEffectiveModelFallbacks,
   resolveSessionAgentId,
   resolveAgentSkillsFilter,
@@ -668,17 +669,30 @@ async function agentCommandInternal(
     }
 
     if (!resolvedThinkLevel) {
-      let catalogForThinking = modelCatalog ?? allowedModelCatalog;
-      if (!catalogForThinking || catalogForThinking.length === 0) {
-        modelCatalog = await loadModelCatalog({ config: cfg });
-        catalogForThinking = modelCatalog;
+      // SB675f (MyndLens Addendum 101l): honor the PER-AGENT thinkingDefault
+      // on the agent lane, exactly as the auto-reply lane already does
+      // (auto-reply/reply/model-selection.ts:466) and as the config schema
+      // documents ("Overrides agents.defaults.thinkingDefault for this
+      // agent"). Live root, mandate_a3a32779: agents.list[cat_investing_
+      // markets].thinkingDefault="low" with a gemini-2.5-pro primary was
+      // IGNORED here — the fleet default "off" applied and vertex rejected
+      // every call with 400 "does not support thinking_budget 0".
+      const agentEntryThink = resolveAgentThinkingDefault(cfg, sessionAgentId);
+      if (agentEntryThink) {
+        resolvedThinkLevel = agentEntryThink;
+      } else {
+        let catalogForThinking = modelCatalog ?? allowedModelCatalog;
+        if (!catalogForThinking || catalogForThinking.length === 0) {
+          modelCatalog = await loadModelCatalog({ config: cfg });
+          catalogForThinking = modelCatalog;
+        }
+        resolvedThinkLevel = resolveThinkingDefault({
+          cfg,
+          provider,
+          model,
+          catalog: catalogForThinking,
+        });
       }
-      resolvedThinkLevel = resolveThinkingDefault({
-        cfg,
-        provider,
-        model,
-        catalog: catalogForThinking,
-      });
     }
     if (resolvedThinkLevel === "xhigh" && !supportsXHighThinking(provider, model)) {
       const explicitThink = Boolean(thinkOnce || thinkOverride);

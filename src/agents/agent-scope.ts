@@ -52,6 +52,24 @@ type ResolvedAgentConfig = {
 
 let defaultAgentWarned = false;
 
+/**
+ * SB675f (MyndLens Addendum 101l) — the PER-AGENT thinkingDefault, resolved
+ * for the agent lane. The config schema has always documented
+ * agents.list[].thinkingDefault as "overrides agents.defaults... for this
+ * agent", and the auto-reply lane honors it — but the embedded agent lane
+ * read only the fleet default. Live root, mandate_a3a32779: a gemini-2.5-pro
+ * pilot with thinkingDefault "low" ran with the fleet's "off" and vertex
+ * rejected every call (400 thinking_budget=0). Returns undefined when the
+ * agent declares none — the caller falls through to the fleet resolver.
+ */
+export function resolveAgentThinkingDefault(
+  cfg: OpenClawConfig,
+  agentId: string,
+): AgentEntry["thinkingDefault"] {
+  const normalized = normalizeAgentId(agentId);
+  return listAgentEntries(cfg).find((e) => normalizeAgentId(e?.id) === normalized)?.thinkingDefault;
+}
+
 export function listAgentEntries(cfg: OpenClawConfig): AgentEntry[] {
   const list = cfg.agents?.list;
   if (!Array.isArray(list)) {
