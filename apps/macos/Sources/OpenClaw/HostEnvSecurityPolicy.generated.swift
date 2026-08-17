@@ -86,6 +86,7 @@ enum HostEnvSecurityPolicy {
 
     static let blockedOverridePrefixes: [String] = [
         "GIT_CONFIG_",
+        "MYNDLENS_",
         "NPM_CONFIG_"
     ]
 

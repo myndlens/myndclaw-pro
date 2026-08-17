@@ -76,6 +76,6 @@
     "XDG_CONFIG_HOME",
     "AWS_CONFIG_FILE"
   ],
-  "blockedOverridePrefixes": ["GIT_CONFIG_", "NPM_CONFIG_"],
+  "blockedOverridePrefixes": ["GIT_CONFIG_", "MYNDLENS_", "NPM_CONFIG_"],
   "blockedPrefixes": ["DYLD_", "LD_", "BASH_FUNC_"]
 }

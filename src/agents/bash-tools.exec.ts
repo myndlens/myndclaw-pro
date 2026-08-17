@@ -446,12 +446,26 @@ export function createExecTool(
 
       // MyndLens SB674 (Addendum 100) — a mandate-run session carries the CP
       // execution id in its own session key; local skills (cp_receipt.py) read
-      // MYNDLENS_MANDATE_ID so their evidence receipts bind to the mandate even
-      // when the model omits --mandate (proven 5/5 on a live run). Derived
-      // per-exec from the session identity: no process-global state, no race
-      // between concurrent mandates. An explicit params.env override wins.
+      // MYNDLENS_MANDATE_ID so their evidence receipts bind to the mandate.
+      // Derived per-exec from the session identity: no process-global state,
+      // no race between concurrent mandates.
+      // MyndLens SB681f (Addendum 115/158, "one pathway per truth") — the
+      // derived identity WINS UNCONDITIONALLY. The prior `=== undefined`
+      // guard let a model-supplied params.env stamp evidence receipts onto
+      // ANY mandate id it chose; identity is code-derived, never
+      // model-suppliable. The host env filter also rejects MYNDLENS_*
+      // overrides (blockedOverridePrefixes); this is the belt for every
+      // exec path. An override attempt is a LOUD event, never a silent win.
       const myndlensMandateId = deriveMandateIdFromSessionKey(defaults?.sessionKey);
-      if (myndlensMandateId && env.MYNDLENS_MANDATE_ID === undefined) {
+      if (myndlensMandateId) {
+        if (
+          env.MYNDLENS_MANDATE_ID !== undefined &&
+          env.MYNDLENS_MANDATE_ID !== myndlensMandateId
+        ) {
+          warnings.push(
+            `Warning: params.env MYNDLENS_MANDATE_ID override rejected — receipt identity is derived from the session (${myndlensMandateId}).`,
+          );
+        }
         env.MYNDLENS_MANDATE_ID = myndlensMandateId;
       }
 
