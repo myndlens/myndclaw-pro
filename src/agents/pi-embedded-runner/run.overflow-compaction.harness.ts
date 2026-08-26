@@ -332,9 +332,20 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     ensureRuntimePluginsLoaded: mockedEnsureRuntimePluginsLoaded,
   }));
 
-  vi.doMock("../../plugins/provider-runtime.js", () => ({
-    prepareProviderRuntimeAuth: mockedPrepareProviderRuntimeAuth,
-  }));
+  vi.doMock("../../plugins/provider-runtime.js", async () => {
+    // MyndLens SB696: the hand-listed mock predated newer provider-runtime
+    // imports (resolveProviderCapabilitiesWithPlugin, prepareProviderExtra
+    // Params, ...) and broke EVERY battery riding this harness on a clean
+    // tree (pre-existing). Spread the real module and override only the
+    // seam these pins actually stub — the mock can no longer drift.
+    const actual = await vi.importActual<typeof import("../../plugins/provider-runtime.js")>(
+      "../../plugins/provider-runtime.js",
+    );
+    return {
+      ...actual,
+      prepareProviderRuntimeAuth: mockedPrepareProviderRuntimeAuth,
+    };
+  });
 
   vi.doMock("../auth-profiles.js", () => ({
     isProfileInCooldown: vi.fn(() => false),
@@ -369,23 +380,31 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     redactRunIdentifier: vi.fn((value?: string) => value ?? ""),
   }));
 
-  vi.doMock("../pi-embedded-helpers.js", () => ({
-    formatBillingErrorMessage: mockedFormatBillingErrorMessage,
-    classifyFailoverReason: mockedClassifyFailoverReason,
-    extractObservedOverflowTokenCount: mockedExtractObservedOverflowTokenCount,
-    formatAssistantErrorText: mockedFormatAssistantErrorText,
-    isAuthAssistantError: mockedIsAuthAssistantError,
-    isBillingAssistantError: mockedIsBillingAssistantError,
-    isCompactionFailureError: mockedIsCompactionFailureError,
-    isLikelyContextOverflowError: mockedIsLikelyContextOverflowError,
-    isFailoverAssistantError: mockedIsFailoverAssistantError,
-    isFailoverErrorMessage: mockedIsFailoverErrorMessage,
-    parseImageSizeError: mockedParseImageSizeError,
-    parseImageDimensionError: mockedParseImageDimensionError,
-    isRateLimitAssistantError: mockedIsRateLimitAssistantError,
-    isTimeoutErrorMessage: mockedIsTimeoutErrorMessage,
-    pickFallbackThinkingLevel: mockedPickFallbackThinkingLevel,
-  }));
+  vi.doMock("../pi-embedded-helpers.js", async () => {
+    // MyndLens SB696: same drift class — the hand-list predated SB542's
+    // decideSameModelRetry. Spread the real module under the stubs.
+    const actual = await vi.importActual<typeof import("../pi-embedded-helpers.js")>(
+      "../pi-embedded-helpers.js",
+    );
+    return {
+      ...actual,
+      formatBillingErrorMessage: mockedFormatBillingErrorMessage,
+      classifyFailoverReason: mockedClassifyFailoverReason,
+      extractObservedOverflowTokenCount: mockedExtractObservedOverflowTokenCount,
+      formatAssistantErrorText: mockedFormatAssistantErrorText,
+      isAuthAssistantError: mockedIsAuthAssistantError,
+      isBillingAssistantError: mockedIsBillingAssistantError,
+      isCompactionFailureError: mockedIsCompactionFailureError,
+      isLikelyContextOverflowError: mockedIsLikelyContextOverflowError,
+      isFailoverAssistantError: mockedIsFailoverAssistantError,
+      isFailoverErrorMessage: mockedIsFailoverErrorMessage,
+      parseImageSizeError: mockedParseImageSizeError,
+      parseImageDimensionError: mockedParseImageDimensionError,
+      isRateLimitAssistantError: mockedIsRateLimitAssistantError,
+      isTimeoutErrorMessage: mockedIsTimeoutErrorMessage,
+      pickFallbackThinkingLevel: mockedPickFallbackThinkingLevel,
+    };
+  });
 
   vi.doMock("./run/attempt.js", () => ({
     runEmbeddedAttempt: mockedRunEmbeddedAttempt,
@@ -429,9 +448,17 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
     resolveContextWindowInfo: mockedResolveContextWindowInfo,
   }));
 
-  vi.doMock("../../process/command-queue.js", () => ({
-    enqueueCommandInLane: vi.fn((_lane: string, task: () => unknown) => task()),
-  }));
+  vi.doMock("../../process/command-queue.js", async () => {
+    // MyndLens SB696: same drift class as provider-runtime above — spread the
+    // real module, override only the stubbed seam.
+    const actual = await vi.importActual<typeof import("../../process/command-queue.js")>(
+      "../../process/command-queue.js",
+    );
+    return {
+      ...actual,
+      enqueueCommandInLane: vi.fn((_lane: string, task: () => unknown) => task()),
+    };
+  });
 
   vi.doMock("../../utils/message-channel.js", () => ({
     isMarkdownCapableMessageChannel: vi.fn(() => true),

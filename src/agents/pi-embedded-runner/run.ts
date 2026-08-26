@@ -311,6 +311,14 @@ export async function runEmbeddedPiAgent(
       let autoCompactionCount = 0;
       let runLoopIterations = 0;
       let overloadFailoverAttempts = 0;
+      // MyndLens SB696 (Addenda 473/474) — zero-token empty "stop" retry budget.
+      // Upstream cure class: openclaw#71880 / PR #93073 ("treat zero-token empty
+      // stop turns as failed provider output, retry once"); scaffold PR #63688.
+      // ONE retry, then a loud error — never a silent "completed" (Add.470's
+      // one-attempt law lives at CP; this is the provider-fault repair INSIDE
+      // the one attempt, the same class as a transport retry).
+      let emptyStopRetries = 0;
+      const MAX_EMPTY_STOP_RETRIES = 1;
       let timeoutCompactionAttempts = 0;
       const maybeMarkAuthProfileFailure = async (failure: {
         profileId?: string;
@@ -1439,6 +1447,75 @@ export async function runEmbeddedPiAgent(
                 successfulCronAdds: attempt.successfulCronAdds,
               };
             }
+          }
+
+          // ── MyndLens SB696 (Addenda 473/474): THE ZERO-TOKEN EMPTY "stop". ──
+          // The guard above deliberately excludes terminal stop reasons, so a
+          // model that CLEANLY stops with zero output tokens and empty content
+          // sailed through both guards and the run reported "completed" with no
+          // payloads ("No reply from agent.") — the persistent empty-final-frame
+          // class (live kills: mandate_d158d8c2, mandate_3a746a1e attempt 1,
+          // mandate_c04aed55; gemini-2.5-pro via google-vertex, stopReason=
+          // "stop", usage.output=0, emitted right after a successful tool
+          // result). Upstream ruled this class "failed provider output, retry
+          // once" (#71880 / #93073). Retry ONCE — the replay self-repairs (the
+          // Gemini converter drops empty model turns: google-shared parts
+          // pruning) — then surface a LOUD error, never a silent completion.
+          if (
+            payloads.length === 0 &&
+            !aborted &&
+            !timedOut &&
+            !promptError &&
+            !attempt.clientToolCall &&
+            !attempt.yieldDetected &&
+            !attempt.didSendDeterministicApprovalPrompt &&
+            !attempt.lastToolError &&
+            !attempt.didSendViaMessagingTool &&
+            attempt.assistantTexts.length === 0 &&
+            lastAssistant != null &&
+            lastAssistant.stopReason !== "error" &&
+            lastAssistant.stopReason !== "toolUse" &&
+            !normalizeUsage(lastAssistant.usage as UsageLike)?.output
+          ) {
+            emptyStopRetries += 1;
+            if (emptyStopRetries <= MAX_EMPTY_STOP_RETRIES) {
+              log.warn(
+                `[empty-stop-retry] zero-token empty ${String(lastAssistant.stopReason ?? "stop")} ` +
+                  `from ${provider}/${modelId} (usage.output=0, responseId=` +
+                  `${(lastAssistant as { responseId?: string }).responseId ?? "(none)"}) — ` +
+                  `failed provider output, retry ${emptyStopRetries}/${MAX_EMPTY_STOP_RETRIES}. ` +
+                  `runId=${params.runId} sessionId=${params.sessionId}`,
+              );
+              continue;
+            }
+            log.error(
+              `[empty-stop-exhausted] zero-token empty ${String(lastAssistant.stopReason ?? "stop")} ` +
+                `from ${provider}/${modelId} persisted after ${MAX_EMPTY_STOP_RETRIES} retry — ` +
+                `surfacing a loud failure, never a silent completion. ` +
+                `runId=${params.runId} sessionId=${params.sessionId}`,
+            );
+            return {
+              payloads: [
+                {
+                  text:
+                    `⚠️ ${provider}/${modelId} returned an empty response (zero output tokens, ` +
+                    `clean stop) twice in a row. The step did not produce its reply.`,
+                  isError: true,
+                },
+              ],
+              meta: {
+                durationMs: Date.now() - started,
+                agentMeta,
+                aborted,
+                systemPromptReport: attempt.systemPromptReport,
+              },
+              didSendViaMessagingTool: attempt.didSendViaMessagingTool,
+              didSendDeterministicApprovalPrompt: attempt.didSendDeterministicApprovalPrompt,
+              messagingToolSentTexts: attempt.messagingToolSentTexts,
+              messagingToolSentMediaUrls: attempt.messagingToolSentMediaUrls,
+              messagingToolSentTargets: attempt.messagingToolSentTargets,
+              successfulCronAdds: attempt.successfulCronAdds,
+            };
           }
 
           log.debug(
