@@ -41,6 +41,8 @@ export type IngressStoreOptions = {
   retentionDays?: number;
   /** Called with any write failure. Doctrine 1: capture failure is never silent. */
   onError?: (err: unknown) => void;
+  /** SB746 F1: said once per @lid chat whose key carries no remoteJidAlt (recorded under the lid, phone-less). */
+  onLidUnresolved?: (lid: string) => void;
 };
 
 export function resolveIngressDbPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -52,6 +54,29 @@ export function resolveIngressDbPath(env: NodeJS.ProcessEnv = process.env): stri
 }
 
 /** Text of a message, whatever envelope it arrived in. Null when it carries no text. */
+/**
+ * SB746 F1 (the Captain, 2 Nov 2026: "Canonical id = wa_ + whatsApp number … the whatsApp number is only one" · "Proceed
+ * with the data steps 1 thru 5"): THE CHAT KEY IS THE PARTNER'S WHATSAPP NUMBER. WhatsApp keys live chats by a privacy @lid
+ * and puts the partner's phone jid on the same key as remoteJidAlt (Baileys 7). This store keyed every such chat by the lid
+ * (measured 1 Nov: 6,900 lid rows, 6,832 with the alt unread) — one person under two chat keys, a thread read on one key
+ * half empty. Same law as the tenant recorder (dsv2/wa_extract_shared.mjs resolveLiveChatJid): @s.whatsapp.net → itself;
+ * @lid + alt phone jid → the alt, device suffix stripped; @lid without an alt → the lid, said once. Pure.
+ */
+export function resolveChatJid(
+  key: { remoteJid?: string | null; remoteJidAlt?: string | null } | null | undefined,
+): {
+  chatJid: string;
+  lid: string;
+  resolved: boolean;
+} {
+  const jid = String(key?.remoteJid ?? "");
+  if (!jid.endsWith("@lid")) return { chatJid: jid, lid: "", resolved: true };
+  const alt = String(key?.remoteJidAlt ?? "");
+  if (alt.endsWith("@s.whatsapp.net"))
+    return { chatJid: alt.replace(/:\d+@/, "@"), lid: jid, resolved: true };
+  return { chatJid: jid, lid: jid, resolved: false };
+}
+
 export function extractText(msg: WAMessage): string | null {
   const m = msg.message;
   if (!m) {
@@ -117,6 +142,7 @@ export function openIngressStore(options: IngressStoreOptions = {}): IngressStor
   const prune = db.prepare("DELETE FROM wa_messages WHERE received_at < ?");
 
   let writes = 0;
+  const saidLids = new Set<string>();
 
   return {
     dbPath,
@@ -124,7 +150,14 @@ export function openIngressStore(options: IngressStoreOptions = {}): IngressStor
       try {
         const key = msg.key;
         const msgId = key?.id;
-        const chatJid = key?.remoteJid;
+        const ident = resolveChatJid(
+          key as { remoteJid?: string | null; remoteJidAlt?: string | null },
+        );
+        const chatJid = ident.chatJid;
+        if (!ident.resolved && !saidLids.has(ident.lid)) {
+          saidLids.add(ident.lid);
+          options.onLidUnresolved?.(ident.lid);
+        }
         if (!msgId || !chatJid) {
           return; // no identity, no row — nothing downstream could join on it
         }

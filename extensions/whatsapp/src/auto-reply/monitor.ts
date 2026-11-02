@@ -109,6 +109,13 @@ function getIngressStore(): IngressStore | null {
           "SB638 capture write FAILED — this message did not reach Signal Memory",
         );
       },
+      // SB746 F1: a @lid chat whose key carries no remoteJidAlt is recorded under the lid (phone-less) — said once per lid.
+      onLidUnresolved: (lid) => {
+        getChildLogger({ module: "wa-ingress-store" }).warn(
+          { lid },
+          "SB746 F1 chat key unresolved — no remoteJidAlt; recorded under the lid, phone-less",
+        );
+      },
     });
     ingressStoreFailed = false;
     return ingressStore;

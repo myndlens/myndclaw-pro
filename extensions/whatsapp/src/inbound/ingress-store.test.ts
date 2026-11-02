@@ -129,3 +129,83 @@ describe("SB638 capture store", () => {
     expect(extractMediaType(msg({ message: { conversation: "x" } }))).toBeNull();
   });
 });
+
+describe("SB746 F1 — the chat key is the partner's WhatsApp number", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "sb746-f1-"));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("resolveChatJid: phone jid stays; a lid with an alt becomes the alt (device suffix stripped); a lid without stays", async () => {
+    const { resolveChatJid } = await import("./ingress-store.js");
+    expect(resolveChatJid({ remoteJid: "15551234@s.whatsapp.net" })).toEqual({
+      chatJid: "15551234@s.whatsapp.net",
+      lid: "",
+      resolved: true,
+    });
+    expect(
+      resolveChatJid({
+        remoteJid: "54030789263403@lid",
+        remoteJidAlt: "15551234:7@s.whatsapp.net",
+      }),
+    ).toEqual({ chatJid: "15551234@s.whatsapp.net", lid: "54030789263403@lid", resolved: true });
+    expect(resolveChatJid({ remoteJid: "54030789263403@lid" })).toEqual({
+      chatJid: "54030789263403@lid",
+      lid: "54030789263403@lid",
+      resolved: false,
+    });
+    expect(resolveChatJid({ remoteJid: "120363@g.us" })).toEqual({
+      chatJid: "120363@g.us",
+      lid: "",
+      resolved: true,
+    });
+  });
+
+  it("the REAL store records an inbound @lid message and MyndLens's own send under ONE key — the number", () => {
+    const dbPath = path.join(dir, "wa-ingress.sqlite");
+    const said: string[] = [];
+    const store = openIngressStore({ dbPath, onLidUnresolved: (l) => said.push(l) });
+    store.record("default", {
+      key: {
+        id: "IN1",
+        remoteJid: "54030789263403@lid",
+        remoteJidAlt: "15551234:3@s.whatsapp.net",
+        fromMe: false,
+      },
+      message: { conversation: "hello" },
+      messageTimestamp: 1_700_000_000,
+    } as unknown as WAMessage);
+    store.record("default", {
+      key: { id: "OUT1", remoteJid: "15551234@s.whatsapp.net", fromMe: true },
+      message: { conversation: "reply" },
+      messageTimestamp: 1_700_000_060,
+    } as unknown as WAMessage);
+    store.record("default", {
+      key: { id: "IN2", remoteJid: "99900011122233@lid", fromMe: false },
+      message: { conversation: "no alt" },
+      messageTimestamp: 1_700_000_100,
+    } as unknown as WAMessage);
+    store.record("default", {
+      key: { id: "IN3", remoteJid: "99900011122233@lid", fromMe: false },
+      message: { conversation: "no alt again" },
+      messageTimestamp: 1_700_000_160,
+    } as unknown as WAMessage);
+    store.close();
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    const rows = db.prepare("SELECT msg_id, chat_jid FROM wa_messages ORDER BY ts").all() as {
+      msg_id: string;
+      chat_jid: string;
+    }[];
+    db.close();
+    expect(rows).toEqual([
+      { msg_id: "IN1", chat_jid: "15551234@s.whatsapp.net" },
+      { msg_id: "OUT1", chat_jid: "15551234@s.whatsapp.net" },
+      { msg_id: "IN2", chat_jid: "99900011122233@lid" },
+      { msg_id: "IN3", chat_jid: "99900011122233@lid" },
+    ]);
+    expect(said).toEqual(["99900011122233@lid"]);
+  });
+});
